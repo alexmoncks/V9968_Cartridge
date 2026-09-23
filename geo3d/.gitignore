@@ -25,3 +25,8 @@ __pycache__/
 sim/*.log
 sim/tdiff.txt
 sim/*_sys*.txt
+showcase/out/
+rom/out/
+rom/rom_tables.asm
+z80/GEO3D.COM
+z80/GEO3DF.COM

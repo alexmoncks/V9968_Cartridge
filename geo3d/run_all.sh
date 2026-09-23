@@ -90,6 +90,25 @@ if command -v ffmpeg >/dev/null 2>&1; then
     "GEO3D em blocos sólidos: faces sombreadas, pintadas pelo VDP linha a linha"
 fi
 
+echo "== showcase scenes and the demo ROM"
+cd ../showcase
+for s in panzoom crawl flyin; do
+  python3 showcase.py $s 1 6
+  (cd ../sim && vvp -n tbe.vvp +stim=../showcase/out/${s}_engine_stim.txt \
+     +got=../showcase/out/${s}_engine_got.txt > /dev/null)
+  cmp out/${s}_engine_expect.txt out/${s}_engine_got.txt && echo "PASS: $s, geo3d RTL == model"
+  if [ -n "$V" ]; then
+    (cd ../sim && vvp -n tbs.vvp +stim=../showcase/out/${s}_sys_sample.txt \
+       +frames=../showcase/out/${s}_sample_got.hex | grep Sistema)
+    python3 check_sample.py $s
+  fi
+done
+cd ../rom
+python3 build_rom.py
+python3 run_rom_z80.py
+python3 run_rom_z80.py 100
+cd ../sim
+
 echo "== synthesis and P&R (GW2AR-18)"
 cd ../syn
 yowasp-yosys -q -p "read_verilog ../rtl/geo3d_core.v ../rtl/geo3d_engine.v ../rtl/geo3d_bus.v geo3d_pnr_top.v; synth_gowin -family gw2a -top geo3d_pnr_top -json top.json"

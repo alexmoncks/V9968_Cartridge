@@ -234,6 +234,59 @@ until geo3d reports idle: geometry, sorting, span setup, command issue and
 drawing) takes 4.1 ms, well inside a 60 Hz frame (16.7 ms). In V9938-compatible timing LINE costs about 265 clocks per pixel, so
 high-speed mode is what makes filled and textured objects practical.
 
+## Showcase videos (`showcase/`)
+
+`showcase/showcase.py` builds three scenes as lists of the port operations a Z80
+program would perform (geo3d writes, the Z80's own VDP commands, VRAM uploads,
+page flips) and renders them with the Python system model:
+
+- `panzoom`: the textured logo while the camera zooms (focal length F) and pans
+  (translation); 33 bytes to geo3d per frame.
+- `crawl`: a perspective text crawl. One tilted plane cut into 75 strips, textured
+  by LRMM; the Z80 only moves TEXY (2 bytes per frame) and the text scrolls. Two
+  tricks: the light level doubles as a texture bank (each strip's normal selects
+  level 1..5, so the plane reaches 1,200 texture rows through `TEXY + level *
+  TSTRIDE + v`), and the LRMM source window (R#51-58) makes everything outside
+  the text transparent (texel = CLR = 0 with TIMP).
+- `flyin`: the letters arrive one by one over an original SCREEN 5 scene copied
+  from VRAM page 3 every frame (HMMM), then the logo turns. The Z80 only rewrites
+  the moving letter's vertices.
+
+Checks: the geo3d RTL (`sim/tb_engine.v`) reproduces the model's command log for
+every frame of every scene (311,741 LRMM for the crawl; 331,152 and 237,232
+commands for the other two), and sampled frames run end to end on geo3d_bus +
+HRA!'s `vdp_command.v` (`sim/tb_system.v`, `showcase/check_sample.py`) paint the
+same pages as the model.
+
+This caught one model gap: `vdp_command.v` applies TIMP transparency to the
+whole CLR byte (0x80 is not transparent) but writes only its low nibble, for LINE
+and for LRMM sources outside the window. `sim/hra/check_lrmm.py` now models
+this and draws CLR from the full byte range.
+
+## Demo ROM for real hardware (`rom/`)
+
+`rom/build_rom.py` builds `rom/out/GEO3D.ROM`, a 512 KB MegaROM with the ASCII16
+mapper, for a flash cartridge in a second slot next to the V9968 cartridge
+(DIP switch at 88h). It plays, in a loop: the crawl, the wireframe, the solid
+blocks, the textured spin, pan and zoom, and the fly-in. The space bar skips to
+the next demo. The picture is on the V9968 HDMI output, at 30 frames per second.
+
+- `rom/geo3d_rom.asm`: the player (769 bytes, bank 0). Each demo is a command
+  stream in banks 1-18: geo3d writes, VDP register writes, RLE-compressed VRAM
+  uploads, wait-for-idle and page flips. The streams are exactly the traffic
+  checked above (the .COM demos are captured from their Z80 runs). Pacing uses
+  S#0 bit7, which `vdp_cpu_interface.v` sets every frame and clears on read.
+- `rom/run_rom_z80.py`: runs the ROM in a Z80 emulator as an MSX would
+  (ENASLT/RSLREG, ASCII16 bank switching into page 2, V9968 and geo3d status),
+  decodes every OUT and compares each demo with its verified traffic: all six
+  are identical, the sequence restarts, and the space bar moves on at the
+  right frame.
+
+Not yet checked on hardware: the geo3d bitstream built with Gowin EDA (the
+cartridge's DVI IP is encrypted, so the open toolchain cannot produce the full
+bitstream), VRAM write speed with OTIR, and the flash cartridge mapper setting
+(choose ASCII16).
+
 ### Known limits (next steps)
 - Edges crossing the near plane are skipped (needs 3D clipping before projection).
 - W <= 512, H <= 1024.
@@ -267,6 +320,8 @@ Regenerate the table with a different motion in `z80/gen_tables.py`.
 - sim/check_system.py compares the painted VRAM pages with the model
 - sim/render_vram.py  renders the painted VRAM pages into MP4 / GIF
 - syn/cartridge/      whole-cartridge synthesis script and Yosys reports
+- showcase/           showcase scenes, system model, videos, RTL cross-checks
+- rom/                MegaROM player, stream builder, Z80-emulator check
 - integration/        patch that wires geo3d into the cartridge project
 - run_all.sh          reproduces everything (iverilog, python3, z80asm, pip: yowasp-yosys, yowasp-nextpnr-himbaechel-gowin, z80)
 

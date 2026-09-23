@@ -37,6 +37,8 @@ class Vram:
 
 
 def lop(op, src, dst):
+    """src may be the full CLR byte (LINE, LRMM outside the window): vdp_command.v
+    tests TIMP transparency on all 8 bits and writes the low nibble (put masks)."""
     t = op & 8
     if t and src == 0:
         return dst
@@ -54,7 +56,7 @@ def model_lrmm(vr, c):
     for k in range(c["nx"]):
         ix, iy = s(sx >> 8, 12), s(sy >> 8, 13)
         if ix < wsx or ix > wex or iy < wsy or iy > wey:
-            src = c["clr"] & 15
+            src = c["clr"] & 0xFF             # full byte for TIMP, see lop()
         else:
             src = vr.get(ix, iy)
         vr.put(dx, dy, lop(c["lop"], src, vr.get(dx, dy)))
@@ -71,7 +73,7 @@ def model_line(vr, c):
     syd = -1 if c["diy"] else 1
     nyb = ((nx - 1) & 0x7FF) >> 1
     for i in range(nx + 1):
-        vr.put(x, y, lop(c["lop"], c["clr"] & 15, vr.get(x, y)))
+        vr.put(x, y, lop(c["lop"], c["clr"] & 0xFF, vr.get(x, y)))
         # vdp_command.v ends LINE after this dot when NX is reached, when the
         # next DX would leave 0..255 (checked even if X does not step), or when
         # moving up from DY = 0
@@ -131,7 +133,7 @@ def main():
                      dx=rng.randrange(0, 256), dy=dy, nx=rng.randrange(1, 200),
                      vx=rng.choice([256, 128, 64, 384, rng.randrange(0, 65536)]),
                      vy=rng.choice([0, 0, 32, 65536 - 48, rng.randrange(0, 65536)]),
-                     dix=rng.randrange(2), clr=rng.randrange(16),
+                     dix=rng.randrange(2), clr=rng.choice([rng.randrange(16), rng.randrange(256), 0x80, 0x90]),
                      lop=rng.choice([0, 0, 0, 8, 3, 1, 2]))
             if rng.random() < 0.3:
                 wsx = rng.randrange(0, 128)
@@ -142,7 +144,8 @@ def main():
         else:
             c = dict(dx=rng.randrange(0, 256), dy=dy, nx=rng.randrange(0, 200),
                      ny=0, maj=0, dix=rng.randrange(2), diy=0,
-                     clr=rng.randrange(16), lop=rng.choice([0, 8, 3]))
+                     clr=rng.choice([rng.randrange(16), rng.randrange(256), 0x80]),
+                     lop=rng.choice([0, 8, 3]))
             if rng.random() < 0.5:
                 c["ny"] = rng.randrange(0, c["nx"] + 1)
                 c["maj"] = rng.randrange(2)
