@@ -12,11 +12,13 @@ import sys
 import z80
 
 FRAMES = int(sys.argv[1]) if len(sys.argv) > 1 else 6
+COM = sys.argv[2] if len(sys.argv) > 2 else "GEO3D.COM"
+OUT = sys.argv[3] if len(sys.argv) > 3 else "../sim/demo_stim.txt"
 GEO_IDX, GEO_DAT = 0x8D, 0x8F
 VDP_CTRL, VDP_IND = 0x89, 0x8B
 
 m = z80.Z80Machine()
-code = open("GEO3D.COM", "rb").read()
+code = open(COM, "rb").read()
 m.set_memory_block(0x0100, code)
 m.set_memory_block(0x0005, b"\xC9")   # BDOS entry: RET (handled below)
 m.set_memory_block(0x0000, b"\x76")   # warm boot -> HALT
@@ -90,7 +92,7 @@ for o in geo_ops:
     else:
         lines += ["R", "K", f"F {fr}"]
         fr += 1
-open("../sim/demo_stim.txt", "w").write("\n".join(lines) + "\n")
+open(OUT, "w").write("\n".join(lines) + "\n")
 
 # ------------------------------------------------ VDP side sanity: HMMV blocks
 regs, hmmv = {}, []
