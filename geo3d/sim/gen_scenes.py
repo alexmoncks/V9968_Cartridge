@@ -105,6 +105,63 @@ def render(cfg, verts, edges, color, lop, ypage):
     return cmds, skip, len(cmds), cull
 
 
+# ---------------------------------------------------------------- filled faces
+def sat18(x):
+    return max(-131071, min(131071, x))
+
+
+def render_faces(cfg, verts, faces, lop, ypage, light):
+    """faces: (i0, i1, i2, i3, nx, ny, nz, base). Returns (cmds, skip, draw, cull)."""
+    w, h = cfg[16], cfg[17]
+    m = cfg[0:9]
+    proj = [core_model(cfg, v) for v in verts]            # sx, sy, z, flags
+    lm = [sat18(sum(m[3 * i + j] * light[i] for i in range(3)) >> 14) for j in range(3)]
+    vis, skip, cull = [], 0, 0
+    for fidx, f in enumerate(faces):
+        pv = [proj[f[k]] for k in range(4)]
+        if any(p[3] & 7 for p in pv):
+            skip += 1
+            continue
+        (x0, y0), (x1, y1), (x2, y2) = [(p[0], p[1]) for p in pv[:3]]
+        area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)
+        if area <= 0:
+            cull += 1
+            continue
+        shade = sum(lm[j] * f[4 + j] for j in range(3)) >> 14
+        lvl = 0 if shade <= 0 else min(6, (shade * 7) >> 14)
+        key = sum(p[2] for p in pv)
+        vis.append((key, fidx, (f[7] + lvl) & 0xFF))
+    cmds = []
+    for key, fidx, col in sorted(vis, key=lambda e: (-e[0], e[1])):
+        f = faces[fidx]
+        xs = [proj[f[k]][0] for k in range(4)]
+        ys = [proj[f[k]][1] for k in range(4)]
+        ymin, ymax = max(0, min(ys)), min(h - 1, max(ys))
+        for y in range(ymin, ymax + 1):
+            xl, xr = None, None
+            for k in range(4):
+                xa, ya, xb, yb = xs[k], ys[k], xs[(k + 1) & 3], ys[(k + 1) & 3]
+                cand = []
+                if ya == yb:
+                    if y == ya:
+                        cand = [xa, xb]
+                elif min(ya, yb) <= y <= max(ya, yb):
+                    cand = [xa + ((y - ya) * (xb - xa)) // (yb - ya)]
+                for c in cand:
+                    xl = c if xl is None or c < xl else xl
+                    xr = c if xr is None or c > xr else xr
+            if xl is None:
+                continue
+            cl, cr = max(xl, 0), min(xr, w - 1)
+            if cl > cr:
+                continue
+            dy = (y + ypage) & 0x7FF
+            nx = cr - cl
+            cmds.append([cl & 0xFF, (cl >> 8) & 1, dy & 0xFF, dy >> 8,
+                         nx & 0xFF, (nx >> 8) & 7, 0, 0, col, 0, 0x70 | (lop & 0xF)])
+    return cmds, skip, len(vis), cull
+
+
 # ---------------------------------------------------------------- models
 def cube(s):
     v = [(x, y, z) for x in (-s, s) for y in (-s, s) for z in (-s, s)]
@@ -222,7 +279,10 @@ def main():
 def replay(ops, totals):
     """Interprets the Z80 byte stream exactly like the engine's register window."""
     regs = {"widx": 0, "lo": 0, "vaddr": 0, "eaddr": 0, "nvert": 0, "nedge": 0,
-            "color": 15, "lop": 0, "ypage": 0, "vbuf": [], "ebuf": []}
+            "color": 15, "lop": 0, "ypage": 0, "vbuf": [], "ebuf": [], "fbuf": [],
+            "faddr": 0, "nface": 0}
+    light = [0, 0, -16384]
+    fmem = [(0, 0, 0, 0, 0, 0, 0, 0)] * 256
     cfg = [0] * 9 + [0, 0, 0] + [256, 128, 106, 16, 256, 212]
     vmem = [(0, 0, 0)] * 256
     emem = [(0, 0)] * 256
@@ -239,7 +299,7 @@ def replay(ops, totals):
             sel, b = int(p[1]), int(p[2], 16)
             if sel == 0:
                 regs["widx"] = b
-                regs["vbuf"], regs["ebuf"] = [], []
+                regs["vbuf"], regs["ebuf"], regs["fbuf"] = [], [], []
                 continue
             i = regs["widx"]
             if i < 0x2A:
@@ -260,8 +320,12 @@ def replay(ops, totals):
             elif i == 0x47: regs["ypage"] = (regs["ypage"] & 0xFF) | ((b & 7) << 8)
             elif i == 0x48 and (b & 1):
                 verts = vmem[:regs["nvert"]]
-                edges = emem[:regs["nedge"]]
-                cmds, skip, draw, cull = render(cfg, verts, edges, regs["color"], regs["lop"], regs["ypage"])
+                if b & 2:
+                    cmds, skip, draw, cull = render_faces(cfg, verts, fmem[:regs["nface"]],
+                                                          regs["lop"], regs["ypage"], light)
+                else:
+                    edges = emem[:regs["nedge"]]
+                    cmds, skip, draw, cull = render(cfg, verts, edges, regs["color"], regs["lop"], regs["ypage"])
                 pending = cmds
                 last_counts = (skip, draw, cull)
                 totals["draw"] += draw
@@ -274,6 +338,19 @@ def replay(ops, totals):
                     vmem[regs["vaddr"]] = tuple(signed16(vb[2 * k] | (vb[2 * k + 1] << 8)) for k in range(3))
                     regs["vaddr"] = (regs["vaddr"] + 1) & 0xFF
                     regs["vbuf"] = []
+            elif i == 0x52:
+                regs["fbuf"].append(b)
+                if len(regs["fbuf"]) == 11:
+                    fb = regs["fbuf"]
+                    fmem[regs["faddr"]] = (fb[0], fb[1], fb[2], fb[3],
+                                           signed16(fb[4] | fb[5] << 8), signed16(fb[6] | fb[7] << 8),
+                                           signed16(fb[8] | fb[9] << 8), fb[10])
+                    regs["faddr"] = (regs["faddr"] + 1) & 0xFF
+                    regs["fbuf"] = []
+            elif i == 0x58: regs["faddr"] = b
+            elif i == 0x59: regs["nface"] = b
+            elif i in (0x5A, 0x5C, 0x5E): regs["lo"] = b
+            elif i in (0x5B, 0x5D, 0x5F): light[(i - 0x5B) // 2] = signed16((b << 8) | regs["lo"])
             elif i == 0x51:
                 regs["ebuf"].append(b)
                 if len(regs["ebuf"]) == 2:
@@ -283,6 +360,8 @@ def replay(ops, totals):
             # index advance (same rule as next_idx in RTL)
             if i >> 4 == 4:
                 regs["widx"] = 0x40 | ((i + 1) & 0xF)
+            elif i >> 3 == 0x0B:
+                regs["widx"] = 0x58 | ((i + 1) & 0x7)
             elif i == 0x29:
                 regs["widx"] = 0x24
             elif i < 0x40:
