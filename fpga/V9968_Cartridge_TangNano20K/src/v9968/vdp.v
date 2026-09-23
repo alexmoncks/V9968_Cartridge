@@ -91,6 +91,11 @@ module vdp (
 	// Force Highspeed Mode
 	input				force_highspeed,
 
+	input				ext_cmd_wr,			//	geo3d: external command register write
+	input		[5:0]	ext_cmd_num,
+	input		[7:0]	ext_cmd_data,
+	output				ext_cmd_ce,			//	geo3d: S#2 CE
+
 	// debug pulse
 	input		[ 1:0]	button,
 	output				pulse0,
@@ -412,9 +417,9 @@ module vdp (
 		.command_vram_wdata_mask					( w_command_vram_wdata_mask					),
 		.command_vram_rdata							( w_command_vram_rdata						),
 		.command_vram_rdata_en						( w_command_vram_rdata_en					),
-		.register_write								( w_register_write							),
-		.register_num								( w_register_num							),
-		.register_data								( w_register_data							),
+		.register_write								( w_register_write | ext_cmd_wr ),
+		.register_num								( ext_cmd_wr ? ext_cmd_num  : w_register_num  ),
+		.register_data								( ext_cmd_wr ? ext_cmd_data : w_register_data ),
 		.clear_border_detect						( w_clear_border_detect						),
 		.read_color									( w_read_color								),
 		.status_command_execute						( w_status_command_execute					),
@@ -551,4 +556,7 @@ module vdp (
 		.reg_normalize								( 8'd41										),
 		.reg_50hz_mode								( reg_50hz_mode								)
 	);
+	//	geo3d: expose command-execute status
+	assign ext_cmd_ce = w_status_command_execute;
+
 endmodule
