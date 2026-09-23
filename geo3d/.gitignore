@@ -4,7 +4,12 @@ sim/vectors.hex
 sim/*_stim.txt
 sim/*_expect.txt
 sim/*_got.txt
-__pycache__/
+sim/__pycache__/
 syn/*.json
 z80/GEO3D.COM
 sim/*.mp4
+z80/GEO3DF.COM
+syn/*.log.tmp
+syn/pnr_seed*.log
+syn/pnr_seeds.done
+syn/yosys_top.log
