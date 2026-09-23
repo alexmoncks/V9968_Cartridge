@@ -33,7 +33,7 @@ module tb_bus;
     );
 
     // ------------------------------------------------ V9968 command model
-    reg [7:0] vreg [32:46];
+    reg [7:0] vreg [32:58];
     integer   ce_delay, ce_hold, violations, ncmd;
     integer   fo;
     reg       started;
@@ -50,9 +50,15 @@ module tb_bus;
                     ce_delay <= 2;            // ff_start, then ff_command_execute
                     ce_hold  <= 6 + (vreg[40] % 29) + (($random & 7));
                     ncmd = ncmd + 1;
-                    $fwrite(fo, "L %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
-                            vreg[36], vreg[37], vreg[38], vreg[39], vreg[40], vreg[41],
-                            vreg[42], vreg[43], vreg[44], vreg[45], cmd_data);
+                    if (cmd_data[7:4] == 4'h3)
+                        $fwrite(fo, "M %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                                vreg[32], vreg[33], vreg[34], vreg[35], vreg[36], vreg[37], vreg[38],
+                                vreg[39], vreg[40], vreg[41], vreg[42], vreg[43], vreg[44], vreg[45],
+                                vreg[47], vreg[48], vreg[49], vreg[50], cmd_data);
+                    else
+                        $fwrite(fo, "L %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+                                vreg[36], vreg[37], vreg[38], vreg[39], vreg[40], vreg[41],
+                                vreg[42], vreg[43], vreg[44], vreg[45], cmd_data);
                 end
             end
             if (started) begin

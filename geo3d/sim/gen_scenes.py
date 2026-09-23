@@ -110,8 +110,20 @@ def sat18(x):
     return max(-131071, min(131071, x))
 
 
-def render_faces(cfg, verts, faces, lop, ypage, light):
-    """faces: (i0, i1, i2, i3, nx, ny, nz, base). Returns (cmds, skip, draw, cull)."""
+def fdiv(a, b):
+    """Floor division, as the engine's divider (b != 0)."""
+    return a // b
+
+
+def sat(v, lo, hi):
+    return lo if v < lo else hi if v > hi else v
+
+
+def render_faces(cfg, verts, faces, lop, ypage, light, tex=None):
+    """faces: (i0, i1, i2, i3, nx, ny, nz, base).
+    tex: None, or dict(on, texx, texy, tstride, uv) with uv[face] = 8 bytes
+    (u0 v0 u1 v1 u2 v2 u3 v3). Returns (cmds, skip, draw, cull); cmds are
+    11-byte LINE entries or 19-byte LRMM entries."""
     w, h = cfg[16], cfg[17]
     m = cfg[0:9]
     proj = [core_model(cfg, v) for v in verts]            # sx, sy, z, flags
@@ -130,35 +142,70 @@ def render_faces(cfg, verts, faces, lop, ypage, light):
         shade = sum(lm[j] * f[4 + j] for j in range(3)) >> 14
         lvl = 0 if shade <= 0 else min(6, (shade * 7) >> 14)
         key = sum(p[2] for p in pv)
-        vis.append((key, fidx, (f[7] + lvl) & 0xFF))
+        vis.append((key, fidx, (f[7] + lvl) & 0xFF, lvl))
     cmds = []
-    for key, fidx, col in sorted(vis, key=lambda e: (-e[0], e[1])):
+    for key, fidx, col, lvl in sorted(vis, key=lambda e: (-e[0], e[1])):
         f = faces[fidx]
+        textured = bool(tex and tex["on"] and (f[7] & 0x80))
+        uv = tex["uv"][fidx] if textured else [0] * 8
         xs = [proj[f[k]][0] for k in range(4)]
         ys = [proj[f[k]][1] for k in range(4)]
+        us_ = [uv[2 * k] for k in range(4)]
+        vs_ = [uv[2 * k + 1] for k in range(4)]
         ymin, ymax = max(0, min(ys)), min(h - 1, max(ys))
         for y in range(ymin, ymax + 1):
-            xl, xr = None, None
+            L, R = None, None                      # (x, u, v)
+            def cand(c):
+                nonlocal L, R
+                if L is None or c[0] < L[0]:
+                    L = c
+                if R is None or c[0] > R[0]:
+                    R = c
             for k in range(4):
-                xa, ya, xb, yb = xs[k], ys[k], xs[(k + 1) & 3], ys[(k + 1) & 3]
-                cand = []
+                a, b = k, (k + 1) & 3
+                xa, ya, xb, yb = xs[a], ys[a], xs[b], ys[b]
                 if ya == yb:
                     if y == ya:
-                        cand = [xa, xb]
+                        cand((xa, us_[a] * 256, vs_[a] * 256))
+                        cand((xb, us_[b] * 256, vs_[b] * 256))
                 elif min(ya, yb) <= y <= max(ya, yb):
-                    cand = [xa + ((y - ya) * (xb - xa)) // (yb - ya)]
-                for c in cand:
-                    xl = c if xl is None or c < xl else xl
-                    xr = c if xr is None or c > xr else xr
-            if xl is None:
+                    dy_, den = y - ya, yb - ya
+                    x = xa + fdiv(dy_ * (xb - xa), den)
+                    if textured:
+                        u = us_[a] * 256 + fdiv(dy_ * (us_[b] - us_[a]) * 256, den)
+                        v = vs_[a] * 256 + fdiv(dy_ * (vs_[b] - vs_[a]) * 256, den)
+                    else:
+                        u = v = 0
+                    cand((x, u, v))
+            if L is None:
                 continue
+            xl, xr = L[0], R[0]
             cl, cr = max(xl, 0), min(xr, w - 1)
             if cl > cr:
                 continue
             dy = (y + ypage) & 0x7FF
-            nx = cr - cl
-            cmds.append([cl & 0xFF, (cl >> 8) & 1, dy & 0xFF, dy >> 8,
-                         nx & 0xFF, (nx >> 8) & 7, 0, 0, col, 0, 0x70 | (lop & 0xF)])
+            if not textured:
+                nx = cr - cl
+                cmds.append([cl & 0xFF, (cl >> 8) & 1, dy & 0xFF, dy >> 8,
+                             nx & 0xFF, (nx >> 8) & 7, 0, 0, col, 0, 0x70 | (lop & 0xF)])
+                continue
+            if xr == xl:
+                du = dv = 0
+            else:
+                d = sat(xr - xl, -131071, 131071)
+                du = sat(fdiv(sat(R[1] - L[1], -131071, 131071), d), -32767, 32767)
+                dv = sat(fdiv(sat(R[2] - L[2], -131071, 131071), d), -32767, 32767)
+            off = sat(cl - xl, -131071, 131071)
+            us = L[1] + off * du
+            vs = L[2] + off * dv
+            sx = (tex["texx"] + (us >> 8)) & 0xFFF
+            sy = (tex["texy"] + lvl * tex["tstride"] + (vs >> 8)) & 0x1FFF
+            nxp = cr - cl + 1
+            cmds.append([sx & 0xFF, sx >> 8, sy & 0xFF, sy >> 8,
+                         cl & 0xFF, (cl >> 8) & 1, dy & 0xFF, dy >> 8,
+                         nxp & 0xFF, (nxp >> 8) & 7, 1, 0, col, 0,
+                         du & 0xFF, (du >> 8) & 0xFF, dv & 0xFF, (dv >> 8) & 0xFF,
+                         0x30 | (lop & 0xF)])
     return cmds, skip, len(vis), cull
 
 
@@ -283,6 +330,8 @@ def replay(ops, totals):
             "faddr": 0, "nface": 0}
     light = [0, 0, -16384]
     fmem = [(0, 0, 0, 0, 0, 0, 0, 0)] * 256
+    tmem = [[0] * 8 for _ in range(256)]
+    tx = {"texx": 0, "texy": 512, "tstride": 0, "taddr": 0, "buf": []}
     cfg = [0] * 9 + [0, 0, 0] + [256, 128, 106, 16, 256, 212]
     vmem = [(0, 0, 0)] * 256
     emem = [(0, 0)] * 256
@@ -300,6 +349,7 @@ def replay(ops, totals):
             if sel == 0:
                 regs["widx"] = b
                 regs["vbuf"], regs["ebuf"], regs["fbuf"] = [], [], []
+                tx["buf"] = []
                 continue
             i = regs["widx"]
             if i < 0x2A:
@@ -321,8 +371,10 @@ def replay(ops, totals):
             elif i == 0x48 and (b & 1):
                 verts = vmem[:regs["nvert"]]
                 if b & 2:
+                    tex = dict(on=bool(b & 4), texx=tx["texx"], texy=tx["texy"],
+                               tstride=tx["tstride"], uv=tmem)
                     cmds, skip, draw, cull = render_faces(cfg, verts, fmem[:regs["nface"]],
-                                                          regs["lop"], regs["ypage"], light)
+                                                          regs["lop"], regs["ypage"], light, tex)
                 else:
                     edges = emem[:regs["nedge"]]
                     cmds, skip, draw, cull = render(cfg, verts, edges, regs["color"], regs["lop"], regs["ypage"])
@@ -347,6 +399,18 @@ def replay(ops, totals):
                                            signed16(fb[8] | fb[9] << 8), fb[10])
                     regs["faddr"] = (regs["faddr"] + 1) & 0xFF
                     regs["fbuf"] = []
+            elif i == 0x53:
+                tx["buf"].append(b)
+                if len(tx["buf"]) == 8:
+                    tmem[tx["taddr"]] = list(tx["buf"])
+                    tx["taddr"] = (tx["taddr"] + 1) & 0xFF
+                    tx["buf"] = []
+            elif i == 0x60: tx["texx"] = (tx["texx"] & 0x100) | b
+            elif i == 0x61: tx["texx"] = (tx["texx"] & 0xFF) | ((b & 1) << 8)
+            elif i == 0x62: tx["texy"] = (tx["texy"] & 0x1F00) | b
+            elif i == 0x63: tx["texy"] = (tx["texy"] & 0xFF) | ((b & 0x1F) << 8)
+            elif i == 0x64: tx["tstride"] = b
+            elif i == 0x65: tx["taddr"] = b
             elif i == 0x58: regs["faddr"] = b
             elif i == 0x59: regs["nface"] = b
             elif i in (0x5A, 0x5C, 0x5E): regs["lo"] = b
@@ -362,13 +426,15 @@ def replay(ops, totals):
                 regs["widx"] = 0x40 | ((i + 1) & 0xF)
             elif i >> 3 == 0x0B:
                 regs["widx"] = 0x58 | ((i + 1) & 0x7)
+            elif i >> 3 == 0x0C:
+                regs["widx"] = 0x60 | ((i + 1) & 0x7)
             elif i == 0x29:
                 regs["widx"] = 0x24
             elif i < 0x40:
                 regs["widx"] = i + 1
         elif p[0] == "R":
             for c in pending or []:
-                log.append("L " + " ".join(f"{x:02x}" for x in c))
+                log.append(("M " if len(c) == 19 else "L ") + " ".join(f"{x:02x}" for x in c))
             pending = None
         elif p[0] == "K":
             log.append("K %04x %04x %04x" % last_counts)

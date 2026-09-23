@@ -13,3 +13,15 @@ syn/*.log.tmp
 syn/pnr_seed*.log
 syn/pnr_seeds.done
 syn/yosys_top.log
+z80/GEO3DT.COM
+sim/*.hex
+sim/hra/hra_*
+sim/hra/*.vvp
+syn/cartridge/work/
+syn/top_pnr.json
+z80/tex_init.hex
+sim/hra/__pycache__/
+__pycache__/
+sim/*.log
+sim/tdiff.txt
+sim/*_sys*.txt

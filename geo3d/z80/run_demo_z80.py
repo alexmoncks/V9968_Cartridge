@@ -14,6 +14,7 @@ import z80
 FRAMES = int(sys.argv[1]) if len(sys.argv) > 1 else 6
 COM = sys.argv[2] if len(sys.argv) > 2 else "GEO3D.COM"
 OUT = sys.argv[3] if len(sys.argv) > 3 else "../sim/demo_stim.txt"
+SYS = sys.argv[4] if len(sys.argv) > 4 else None     # optional full-system stimulus
 GEO_IDX, GEO_DAT = 0x8D, 0x8F
 VDP_CTRL, VDP_IND = 0x89, 0x8B
 
@@ -28,6 +29,7 @@ m.pc = 0x0100
 
 geo_ops = []          # ("W", sel, byte) / ("RUN",)
 vdp_writes = []       # (port, byte)
+events = []           # everything, in program order: ("G", sel, b) / ("RUN",) / ("P", port, b)
 state = {"s2_reads": 0, "geo_busy": 0, "idx": None, "frames": 0, "keypolls": 0}
 
 
@@ -35,17 +37,21 @@ def on_out(port, value):
     p = port & 0xFF
     if p == GEO_IDX:
         geo_ops.append(("W", 0, value))
+        events.append(("G", 0, value))
         state["idx"] = value
     elif p == GEO_DAT:
         geo_ops.append(("W", 1, value))
+        events.append(("G", 1, value))
         if state["idx"] == 0x48 and value & 1:
             geo_ops.append(("RUN",))
+            events.append(("RUN",))
             state["geo_busy"] = 3
             state["frames"] += 1
         if state["idx"] is not None and state["idx"] >> 4 == 4:
             state["idx"] = 0x40 | ((state["idx"] + 1) & 0xF)
-    elif p in (VDP_CTRL, VDP_IND, 0x8A, 0x88):
+    elif p in (VDP_CTRL, VDP_IND, 0x8A, 0x88, 0x8C):
         vdp_writes.append((p, value))
+        events.append(("P", p, value))
 
 
 def on_in(port):
@@ -93,6 +99,60 @@ for o in geo_ops:
         lines += ["R", "K", f"F {fr}"]
         fr += 1
 open(OUT, "w").write("\n".join(lines) + "\n")
+
+# ------------------------------------------------ full-system stimulus (tb_system.v)
+# Decodes the Z80's VDP port traffic like vdp_cpu_interface.v does:
+#   89h pairs: register write (bit7) or VRAM address setup (A13..A0, R#14 = A17..A14)
+#   8Bh: indirect register write at R#17 (auto-increment unless bit7 of R#17)
+#   88h: VRAM data write, address auto-increments with carry (bitmap modes)
+# and emits: W sel b / R / F n (geo3d), V reg val and C (command registers,
+# wait CE), X addr b (VRAM write), D y0 (dump the page just shown, R#2).
+if SYS:
+    out, fr = [], 0
+    pend, r14, ptr, pinc, addr = None, 0, 0, True, 0
+
+    def reg_write(r, v):
+        global r14, ptr, pinc
+        if r == 14:
+            r14 = v & 0x0F
+        elif r == 17:
+            ptr, pinc = v & 0x3F, not (v & 0x80)
+        elif r == 2:
+            out.append("C")
+            out.append(f"D {((v >> 5) & 3) * 256}")
+        elif 32 <= r <= 58:
+            out.append(f"V {r} {v:02x}")
+            if r == 46:
+                out.append("C")
+
+    for e in events:
+        if e[0] == "G":
+            out.append(f"W {e[1]} {e[2]:02x}")
+        elif e[0] == "RUN":
+            out += ["R", f"F {fr}"]
+            fr += 1
+        else:
+            p, v = e[1], e[2]
+            if p == VDP_CTRL:
+                if pend is None:
+                    pend = v
+                else:
+                    if v & 0x80:
+                        reg_write(v & 0x3F, pend)
+                    else:
+                        addr = (r14 << 14) | ((v & 0x3F) << 8) | pend
+                    pend = None
+            elif p == VDP_IND:
+                reg_write(ptr, v)
+                if pinc:
+                    ptr = (ptr + 1) & 0x3F
+            elif p == 0x88:
+                out.append(f"X {addr:05x} {v:02x}")
+                addr = (addr + 1) & 0x3FFFF
+    open(SYS, "w").write("\n".join(out) + "\n")
+    print(f"estímulo do sistema: {sum(1 for l in out if l[0] == 'X')} bytes de VRAM, "
+          f"{sum(1 for l in out if l[0] == 'V')} registros de comando do Z80, "
+          f"{sum(1 for l in out if l[0] == 'D')} trocas de página -> {SYS}")
 
 # ------------------------------------------------ VDP side sanity: HMMV blocks
 regs, hmmv = {}, []

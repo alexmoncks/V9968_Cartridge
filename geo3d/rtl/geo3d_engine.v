@@ -34,7 +34,8 @@
 //   0x45 LOP     logical operation (low nibble of R#46)
 //   0x46-0x47 YPAGE  added to every DY (page select), 11 bits
 //   0x48 CTRL    write bit0=1: RUN, bit1: 0 = wireframe (edges), 1 = filled
-//                faces.  read: status (see below)
+//                faces, bit2: 1 = textured faces allowed (see below).
+//                read: status (see below)
 //   0x4A-0x4B SKIPPED (read)  0x4C-0x4D DRAWN (read)  0x4E-0x4F CULLED (read)
 //   0x50 VDATA   vertex stream: 6 bytes (VX,VY,VZ little-endian) per vertex,
 //                stored at VADDR, VADDR auto-increments. Index does not move.
@@ -47,7 +48,15 @@
 //   0x59 NFACE   number of faces (0..255)
 //   0x5A-0x5F LX, LY, LZ  light direction (towards the light) in camera
 //                space, Q2.14 words
-//   Indices 0x40-0x4F and 0x58-0x5F auto-increment (wrap inside the block).
+//   0x53 TDATA   texture-coordinate stream: 8 bytes per face (U0 V0 U1 V1
+//                U2 V2 U3 V3, texels, unsigned), stored at TADDR, TADDR
+//                auto-increments.
+//   0x60-0x61 TEXX     texture origin X in VRAM (9 bits)
+//   0x62-0x63 TEXY     texture origin Y in VRAM (13 bits, e.g. 512 = page 2)
+//   0x64 TSTRIDE       rows between the pre-shaded copies of the texture
+//   0x65 TADDR         texture-coordinate RAM write pointer
+//   Indices 0x40-0x4F, 0x58-0x5F and 0x60-0x67 auto-increment (wrap inside
+//   the block).
 //   Writing the index (port SEL=0) resets the VDATA/EDATA byte counters.
 //
 // Status (port SEL=0 read, no side effects):
@@ -72,6 +81,15 @@
 //      clipped to the screen, is sent as a horizontal LINE command
 //   Counters in this mode: SKIPPED = near faces, CULLED = back faces,
 //   DRAWN = faces drawn.
+//
+// Textured faces (CTRL bit2 = 1 and bit7 of the face BASE colour set): each
+// row is sent as a single-row LRMM instead of a LINE, so the V9968 copies the
+// texels itself. Texture coordinates are interpolated along the edges (8.8
+// fixed point, floor division) and the per-pixel source step VX, VY is
+// (end - start) / width. The source row is offset by level * TSTRIDE, so the
+// Z80 can store 7 pre-shaded copies of the texture and keep flat shading.
+// LRMM needs the V9968 extended commands enabled (R#20 ECOM, PORT#4 unlock).
+// SX has no fraction in LRMM, so each row starts on a whole texel.
 //
 // Limits: W <= 512, H <= 1024 (VDP coordinate range). Edges crossing the near
 // plane are skipped (3D near-plane clipping is future work).
@@ -146,11 +164,14 @@ module geo3d_engine (
     end
 
     reg [87:0] fmem [0:255];      // BASE, NZ, NY, NX, I3, I2, I1, I0
-    reg [33:0] smem [0:255];      // visible faces: KEY(18), FACE(8), COLOUR(8)
+    reg [36:0] smem [0:255];      // visible faces: KEY(18), FACE(8), COLOUR(8), LEVEL(3)
+    reg [63:0] tmem [0:255];      // texture coords: V3 U3 V2 U2 V1 U1 V0 U0
+    reg        twe;  reg [7:0] twa;  reg [63:0] twd;
+    reg [7:0]  tra;  reg [63:0] trd;
     reg        fwe;  reg [7:0] fwa;  reg [87:0] fwd;
     reg [7:0]  fra;  reg [87:0] frd;
-    reg        swe;  reg [7:0] swa;  reg [33:0] swd;
-    reg [7:0]  sra;  reg [33:0] srd;
+    reg        swe;  reg [7:0] swa;  reg [36:0] swd;
+    reg [7:0]  sra;  reg [36:0] srd;
 
     always @(posedge clk) begin
         if (fwe) fmem[fwa] <= fwd;
@@ -159,6 +180,10 @@ module geo3d_engine (
     always @(posedge clk) begin
         if (swe) smem[swa] <= swd;
         srd <= smem[sra];
+    end
+    always @(posedge clk) begin
+        if (twe) tmem[twa] <= twd;
+        trd <= tmem[tra];
     end
 
     // ------------------------------------------------------ Z80 registers
@@ -171,7 +196,12 @@ module geo3d_engine (
     reg  [7:0]  ebuf;
     reg         ebc;
     reg         run_req;
-    reg         ctrl_face;
+    reg         ctrl_face, ctrl_tex;
+    reg  [8:0]  texx;
+    reg  [12:0] texy;
+    reg  [7:0]  tstride, taddr_w;
+    reg  [55:0] tbuf;
+    reg  [2:0]  tbc;
     reg  [7:0]  faddr_w, nface;
     reg  [79:0] fbuf;
     reg  [3:0]  fbc;
@@ -191,6 +221,7 @@ module geo3d_engine (
         begin
             if (i[7:4] == 4'h4)      next_idx = {4'h4, i[3:0] + 4'd1};
             else if (i[7:3] == 5'b01011) next_idx = {5'b01011, i[2:0] + 3'd1};
+            else if (i[7:3] == 5'b01100) next_idx = {5'b01100, i[2:0] + 3'd1};
             else if (i == 8'h29)     next_idx = 8'h24;
             else if (i < 8'h40)      next_idx = i + 8'd1;
             else                     next_idx = i;
@@ -224,6 +255,7 @@ module geo3d_engine (
             8'h4F: rdata = cnt_cull[15:8];
             8'h58: rdata = faddr_w;
             8'h59: rdata = nface;
+            8'h65: rdata = taddr_w;
             default: rdata = 8'hFF;
         endcase
     end
@@ -239,6 +271,8 @@ module geo3d_engine (
             scr_w <= 16'sd256; scr_h <= 16'sd212;
             scr_wm1 <= 17'sd255; scr_hm1 <= 17'sd211;
             ctrl_face <= 1'b0; faddr_w <= 8'd0; nface <= 8'd0; fbc <= 4'd0; fwe <= 1'b0;
+            ctrl_tex <= 1'b0; texx <= 9'd0; texy <= 13'd512; tstride <= 8'd0;
+            taddr_w <= 8'd0; tbc <= 3'd0; twe <= 1'b0;
             lreg[0] <= 16'sd0; lreg[1] <= 16'sd0; lreg[2] <= -16'sd16384;
             for (q = 0; q < 9; q = q + 1) msh[q] <= 16'sd0;
         end else begin
@@ -246,11 +280,12 @@ module geo3d_engine (
             vwe       <= 1'b0;
             ewe       <= 1'b0;
             fwe       <= 1'b0;
+            twe       <= 1'b0;
             run_req   <= 1'b0;
 
             if (wr_stb) begin
                 if (!sel) begin
-                    widx <= din; rptr <= din; vbc <= 3'd0; ebc <= 1'b0; fbc <= 4'd0;
+                    widx <= din; rptr <= din; vbc <= 3'd0; ebc <= 1'b0; fbc <= 4'd0; tbc <= 3'd0;
                 end else begin
                     if (widx < 8'h2A) begin
                         if (!widx[0]) lo_latch <= din;
@@ -279,7 +314,7 @@ module geo3d_engine (
                             8'h45: lop     <= din[3:0];
                             8'h46: ypage[7:0]  <= din;
                             8'h47: ypage[10:8] <= din[2:0];
-                            8'h48: begin run_req <= din[0]; ctrl_face <= din[1]; end
+                            8'h48: begin run_req <= din[0]; ctrl_face <= din[1]; ctrl_tex <= din[2]; end
                             8'h50: begin
                                 if (vbc == 3'd5) begin
                                     vwe <= 1'b1; vwa <= vaddr_w; vwd <= {din, vbuf};
@@ -309,6 +344,22 @@ module geo3d_engine (
                                     fbc  <= fbc + 4'd1;
                                 end
                             end
+                            8'h53: begin
+                                if (tbc == 3'd7) begin
+                                    twe <= 1'b1; twa <= taddr_w; twd <= {din, tbuf};
+                                    taddr_w <= taddr_w + 8'd1;
+                                    tbc <= 3'd0;
+                                end else begin
+                                    tbuf <= {din, tbuf[55:8]};
+                                    tbc  <= tbc + 3'd1;
+                                end
+                            end
+                            8'h60: texx[7:0]   <= din;
+                            8'h61: texx[8]     <= din[0];
+                            8'h62: texy[7:0]   <= din;
+                            8'h63: texy[12:8]  <= din[4:0];
+                            8'h64: tstride     <= din;
+                            8'h65: taddr_w     <= din;
                             8'h58: faddr_w <= din;
                             8'h59: nface   <= din;
                             8'h5A, 8'h5C, 8'h5E: lo_latch <= din;
@@ -378,9 +429,13 @@ module geo3d_engine (
                D_ROW   = 6'd48, D_EDGE = 6'd49, D_EMUL = 6'd50, D_DIV = 6'd51,
                D_DIVE  = 6'd52, D_ENEXT = 6'd53, D_SPAN = 6'd54, D_YNEXT = 6'd55,
                D_NEXTR = 6'd56, D_YR0 = 6'd57, F_S4 = 6'd58,
-               D_SPAN0 = 6'd59, D_DIVE2 = 6'd60, D_EDGE0 = 6'd61, F_A3 = 6'd62;
+               D_SPAN0 = 6'd59, D_DIVE2 = 6'd60, D_EDGE0 = 6'd61, F_A3 = 6'd62,
+               // textured faces
+               D_DQ    = 7'd64, D_XQ  = 7'd65, D_UQ  = 7'd66, D_VQ  = 7'd67,
+               D_CAND  = 7'd68, D_T0  = 7'd69, D_T1  = 7'd70, D_T2  = 7'd71,
+               D_T3    = 7'd72, D_T4  = 7'd73, D_T5  = 7'd74;
 
-    reg [5:0]  st;
+    reg [6:0]  st;
     reg [7:0]  vi, ei;
     reg [47:0] vtmp;
     reg [7:0]  ib;
@@ -394,8 +449,12 @@ module geo3d_engine (
 
     // issuer
     reg        hold_valid;
-    reg [7:0]  hb [0:10];
-    reg [3:0]  ik;
+    reg [7:0]  hb [0:18];
+    reg        hlrmm;                         // 0: LINE (11 regs), 1: LRMM (19 regs)
+    reg [4:0]  ik;
+    // LRMM register order: R#32..R#45, R#47..R#50, then R#46 (starts it)
+    wire [5:0] lrmm_num = (ik < 5'd14) ? 6'd32 + {1'b0, ik} :
+                          (ik < 5'd18) ? 6'd33 + {1'b0, ik} : 6'd46;
     reg        isend;
     reg [2:0]  guard;
 
@@ -483,14 +542,15 @@ module geo3d_engine (
                             + {{2{vz[2][15]}}, vz[2]} + {{2{vz[3][15]}}, vz[3]};
 
     // sort: candidate entry from the visible list
-    wire signed [17:0] ekey = srd[33:16];
-    wire [7:0]  eidx = srd[15:8];
+    wire signed [17:0] ekey = srd[36:19];
+    wire [7:0]  eidx = srd[18:11];
     wire        equal_ok  = first || (ekey < lkey) || (ekey == lkey && eidx > lidx);
     wire        ebetter   = !bvalid || (ekey > bkey) || (ekey == bkey && eidx < bidx);
 
     // fill: current edge (ek -> ek+1) and y range
     wire [1:0]  ek1 = ek + 2'd1;
     reg  signed [16:0] eya, eyb, exa, exb;    // current edge, loaded in D_EDGE0
+    reg  [7:0]  eua, eub, eva, evb;           // texture coords of the edge ends
     wire signed [16:0] ycur = $signed({6'd0, yrow});
     wire signed [16:0] ylo = (eya < eyb) ? eya : eyb;
     wire signed [16:0] yhi = (eya < eyb) ? eyb : eya;
@@ -519,16 +579,63 @@ module geo3d_engine (
     wire signed [19:0] dfq = dsgn ? ((drem != 18'd0) ? -$signed({2'b00, dq}) - 20'sd1
                                                     : -$signed({2'b00, dq}))
                                   : $signed({2'b00, dq});
-    wire signed [19:0] xcross = exa20 + dfq;
 
     // span
     wire signed [19:0] wm1_20 = {{3{wm1[16]}}, wm1};
     wire signed [19:0] scl = (xl < 20'sd0) ? 20'sd0 : xl;
     wire signed [19:0] scr = (xr > wm1_20) ? wm1_20 : xr;
-    reg  signed [19:0] scl_r, scr_r, xc_r;    // registered span / crossing
+    reg  signed [19:0] scl_r, scr_r;    // registered span / crossing
     reg                span_ok;
     wire signed [19:0] snx = scr_r - scl_r;
     wire [10:0] sdy = yrow + ypage;
+
+    // ------------------------------------------------ textured faces
+    reg        ftex, dtex;                    // RUN allows textures / face is textured
+    reg [2:0]  blev, dlev;                    // shade level of the face
+    reg [63:0] tcur;
+    reg [6:0]  dret;                          // return state of the divider
+    reg signed [19:0] qres;                   // floor quotient
+    reg signed [19:0] cx;                     // span candidate: x, u, v (8.8)
+    reg signed [19:0] cu, cv;
+    reg        cand_n;                        // one more candidate (horizontal edge)
+    reg signed [19:0] ul, ur, vl, vr;
+    reg signed [15:0] du, dv;
+    reg signed [35:0] us, vs;
+
+    function [7:0] tu; input [63:0] t; input [1:0] k; tu = t[16 * k +: 8];     endfunction
+    function [7:0] tv; input [63:0] t; input [1:0] k; tv = t[16 * k + 8 +: 8]; endfunction
+
+    function signed [17:0] sat18w;            // 20-bit -> 18-bit signed, symmetric
+        input signed [19:0] x;
+        begin
+            if (x > 20'sd131071)       sat18w = 18'sd131071;
+            else if (x < -20'sd131071) sat18w = -18'sd131071;
+            else                       sat18w = x[17:0];
+        end
+    endfunction
+
+    function signed [15:0] sat16w;
+        input signed [19:0] x;
+        begin
+            if (x > 20'sd32767)        sat16w = 16'sd32767;
+            else if (x < -20'sd32767)  sat16w = -16'sd32767;
+            else                       sat16w = x[15:0];
+        end
+    endfunction
+
+    wire signed [16:0] fdu   = $signed({1'b0, eub, 8'd0}) - $signed({1'b0, eua, 8'd0});
+    wire signed [16:0] fdv   = $signed({1'b0, evb, 8'd0}) - $signed({1'b0, eva, 8'd0});
+    wire signed [17:0] tdu_n = {fdu[16], fdu};           // (ub - ua) * 256
+    wire signed [19:0] eua20 = $signed({4'd0, eua, 8'd0});
+    wire signed [19:0] eva20 = $signed({4'd0, eva, 8'd0});
+    wire signed [19:0] eub20 = $signed({4'd0, eub, 8'd0});
+    wire signed [19:0] evb20 = $signed({4'd0, evb, 8'd0});
+    wire signed [35:0] us_s  = us >>> 8;
+    wire signed [35:0] vs_s  = vs >>> 8;
+    wire [10:0] lev_off = dlev * tstride;
+    wire [11:0] lsx = {3'd0, texx} + us_s[11:0];
+    wire [12:0] lsy = texy + {2'd0, lev_off} + vs_s[12:0];
+    wire [10:0] lnxp = snx[10:0] + 11'd1;     // LRMM counts pixels
 
     integer k;
 
@@ -550,18 +657,18 @@ module geo3d_engine (
             if (!isend) begin
                 if (hold_valid && !cmd_ce && guard == 3'd0) begin
                     isend <= 1'b1;
-                    ik    <= 4'd0;
+                    ik    <= 5'd0;
                 end
             end else begin
                 cmd_wr   <= 1'b1;
-                cmd_num  <= 6'd36 + {2'd0, ik};
+                cmd_num  <= hlrmm ? lrmm_num : 6'd36 + {1'b0, ik};
                 cmd_data <= hb[ik];
-                if (ik == 4'd10) begin
+                if (ik == (hlrmm ? 5'd18 : 5'd10)) begin
                     isend      <= 1'b0;
                     hold_valid <= 1'b0;
                     guard      <= 3'd4;
                 end else begin
-                    ik <= ik + 4'd1;
+                    ik <= ik + 5'd1;
                 end
             end
 
@@ -571,6 +678,7 @@ module geo3d_engine (
                     if (run_req) begin
                         ph_run   <= 1'b1;
                         fmode    <= ctrl_face;
+                        ftex     <= ctrl_tex;
                         cnt_skip <= 16'd0; cnt_draw <= 16'd0; cnt_cull <= 16'd0;
                         vi <= 8'd0;
                         if (nvert == 8'd0) st <= ctrl_face ? L_OP : E_START;
@@ -706,6 +814,7 @@ module geo3d_engine (
                         hb[8]  <= color;
                         hb[9]  <= larg;
                         hb[10] <= {4'h7, lop};
+                        hlrmm  <= 1'b0;
                         hold_valid <= 1'b1;
                         cnt_draw   <= cnt_draw + 16'd1;
                         st <= E_NEXT;
@@ -815,7 +924,7 @@ module geo3d_engine (
                 end
                 F_S4: begin
                     swe <= 1'b1; swa <= nvis;
-                    swd <= {zkey, fi, fcur[87:80] + {5'd0, slevel}};
+                    swd <= {zkey, fi, fcur[87:80] + {5'd0, slevel}, slevel};
                     nvis <= nvis + 8'd1;
                     st <= F_NEXT;
                 end
@@ -835,20 +944,21 @@ module geo3d_engine (
                 D_SW1:  st <= D_SW2;
                 D_SW2: begin
                     if (equal_ok && ebetter) begin
-                        bvalid <= 1'b1; bkey <= ekey; bidx <= eidx; bcol <= srd[7:0];
+                        bvalid <= 1'b1; bkey <= ekey; bidx <= eidx; bcol <= srd[10:3]; blev <= srd[2:0];
                     end
                     si <= si + 8'd1;
                     if (si + 8'd1 == nvis) st <= D_SEL;
                     else                   st <= D_SRD;
                 end
                 D_SEL: begin
-                    first <= 1'b0; lkey <= bkey; lidx <= bidx; dcol <= bcol;
-                    fra <= bidx;
+                    first <= 1'b0; lkey <= bkey; lidx <= bidx; dcol <= bcol; dlev <= blev;
+                    fra <= bidx; tra <= bidx;
                     st <= D_FW1;
                 end
                 D_FW1:  st <= D_FW2;
                 D_FW2: begin
-                    fcur <= frd; vk <= 2'd0; vret <= 1'b1;
+                    fcur <= frd; tcur <= trd; vk <= 2'd0; vret <= 1'b1;
+                    dtex <= ftex & frd[87];
                     st <= V_ADDR;
                 end
 
@@ -873,22 +983,25 @@ module geo3d_engine (
                     eyb <= {vy[ek1][15], vy[ek1]};
                     exa <= {vx[ek][15],  vx[ek]};
                     exb <= {vx[ek1][15], vx[ek1]};
+                    eua <= tu(tcur, ek);  eub <= tu(tcur, ek1);
+                    eva <= tv(tcur, ek);  evb <= tv(tcur, ek1);
                     st  <= D_EDGE;
                 end
                 D_EDGE: begin
                     if (eya == eyb) begin
+                        // horizontal edge on this row: both ends are candidates
                         if (ycur == eya) begin
-                            if (exa20 < xl && exa20 <= exb20) xl <= exa20;
-                            else if (exb20 < xl)              xl <= exb20;
-                            if (exa20 > xr && exa20 >= exb20) xr <= exa20;
-                            else if (exb20 > xr)              xr <= exb20;
+                            cx <= exa20; cu <= eua20; cv <= eva20; cand_n <= 1'b1;
+                            st <= D_CAND;
+                        end else begin
+                            st <= D_ENEXT;
                         end
-                        st <= D_ENEXT;
                     end else if (ycur >= ylo && ycur <= yhi) begin
-                        ma  <= {fdy[16],  fdy};
-                        mb  <= {fdx[16],  fdx};
-                        den <= {fden[16], fden};
-                        st  <= D_EMUL;
+                        ma   <= {fdy[16],  fdy};
+                        mb   <= {fdx[16],  fdx};
+                        den  <= {fden[16], fden};
+                        dret <= D_XQ;
+                        st   <= D_EMUL;
                     end else begin
                         st <= D_ENEXT;
                     end
@@ -906,16 +1019,43 @@ module geo3d_engine (
                     else     begin drem <= drem2[17:0]; dq <= {dq[16:0], 1'b0}; end
                     dlow <= {dlow[16:0], 1'b0};
                     dcnt <= dcnt - 5'd1;
-                    if (dcnt == 5'd0) st <= D_DIVE;
+                    if (dcnt == 5'd0) st <= D_DQ;
                 end
-                D_DIVE: begin
-                    xc_r <= xcross;
-                    st <= D_DIVE2;
+                D_DQ: begin
+                    qres <= dfq;
+                    st   <= dret;
                 end
-                D_DIVE2: begin
-                    if (xc_r < xl) xl <= xc_r;
-                    if (xc_r > xr) xr <= xc_r;
-                    st <= D_ENEXT;
+                D_XQ: begin
+                    cx <= exa20 + qres;
+                    cu <= 20'sd0; cv <= 20'sd0; cand_n <= 1'b0;
+                    if (dtex) begin
+                        ma   <= tdu_n;
+                        mb   <= {fdy[16], fdy};
+                        dret <= D_UQ;
+                        st   <= D_EMUL;
+                    end else begin
+                        st <= D_CAND;
+                    end
+                end
+                D_UQ: begin
+                    cu   <= eua20 + qres;
+                    ma   <= {fdv[16], fdv};
+                    mb   <= {fdy[16], fdy};
+                    dret <= D_VQ;
+                    st   <= D_EMUL;
+                end
+                D_VQ: begin
+                    cv <= eva20 + qres;
+                    st <= D_CAND;
+                end
+                D_CAND: begin
+                    if (cx < xl) begin xl <= cx; ul <= cu; vl <= cv; end
+                    if (cx > xr) begin xr <= cx; ur <= cu; vr <= cv; end
+                    if (cand_n) begin
+                        cx <= exb20; cu <= eub20; cv <= evb20; cand_n <= 1'b0;
+                    end else begin
+                        st <= D_ENEXT;
+                    end
                 end
                 D_ENEXT: begin
                     ek <= ek + 2'd1;
@@ -925,11 +1065,73 @@ module geo3d_engine (
                     scl_r   <= scl;
                     scr_r   <= scr;
                     span_ok <= (xl <= xr) && (scl <= scr);
+                    st <= dtex ? D_T0 : D_SPAN;
+                end
+                // texture step and start for this span
+                D_T0: begin
+                    if (!span_ok) st <= D_SPAN;
+                    else if (xr == xl) begin
+                        du <= 16'sd0; dv <= 16'sd0; st <= D_T3;
+                    end else begin
+                        ma   <= sat18w(ur - ul);
+                        mb   <= 18'sd1;
+                        den  <= sat18w(xr - xl);
+                        dret <= D_T1;
+                        st   <= D_EMUL;
+                    end
+                end
+                D_T1: begin
+                    du   <= sat16w(qres);
+                    ma   <= sat18w(vr - vl);
+                    dret <= D_T2;
+                    st   <= D_EMUL;
+                end
+                D_T2: begin
+                    dv <= sat16w(qres);
+                    st <= D_T3;
+                end
+                D_T3: begin
+                    ma <= sat18w(scl_r - xl);
+                    mb <= {{2{du[15]}}, du};
+                    st <= D_T4;
+                end
+                D_T4: begin
+                    us <= {{16{ul[19]}}, ul} + mp;
+                    mb <= {{2{dv[15]}}, dv};
+                    st <= D_T5;
+                end
+                D_T5: begin
+                    vs <= {{16{vl[19]}}, vl} + mp;
                     st <= D_SPAN;
                 end
                 D_SPAN: begin
                     if (!span_ok) st <= D_YNEXT;
+                    else if (!hold_valid && dtex) begin
+                        hb[0]  <= lsx[7:0];
+                        hb[1]  <= {4'd0, lsx[11:8]};
+                        hb[2]  <= lsy[7:0];
+                        hb[3]  <= {3'd0, lsy[12:8]};
+                        hb[4]  <= scl_r[7:0];
+                        hb[5]  <= {7'd0, scl_r[8]};
+                        hb[6]  <= sdy[7:0];
+                        hb[7]  <= {5'd0, sdy[10:8]};
+                        hb[8]  <= lnxp[7:0];
+                        hb[9]  <= {5'd0, lnxp[10:8]};
+                        hb[10] <= 8'd1;
+                        hb[11] <= 8'd0;
+                        hb[12] <= dcol;
+                        hb[13] <= 8'd0;
+                        hb[14] <= du[7:0];
+                        hb[15] <= du[15:8];
+                        hb[16] <= dv[7:0];
+                        hb[17] <= dv[15:8];
+                        hb[18] <= {4'h3, lop};
+                        hlrmm  <= 1'b1;
+                        hold_valid <= 1'b1;
+                        st <= D_YNEXT;
+                    end
                     else if (!hold_valid) begin
+                        hlrmm  <= 1'b0;
                         hb[0]  <= scl_r[7:0];
                         hb[1]  <= {7'd0, scl_r[8]};
                         hb[2]  <= sdy[7:0];

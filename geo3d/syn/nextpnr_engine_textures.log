@@ -1,0 +1,499 @@
+Info: Using uarch 'gowin' for device 'GW2AR-LV18QN88C8/I7'
+
+Info: Cell O_sdram_clk not found
+Info: Cell O_sdram_cke not found
+Info: Cell O_sdram_cs_n not found
+Info: Cell O_sdram_cas_n not found
+Info: Cell O_sdram_ras_n not found
+Info: Cell O_sdram_wen_n not found
+Info: Cell O_sdram_dqm[0] not found
+Info: Cell O_sdram_dqm[1] not found
+Info: Cell O_sdram_dqm[2] not found
+Info: Cell O_sdram_dqm[3] not found
+Info: Cell O_sdram_addr[0] not found
+Info: Cell O_sdram_addr[1] not found
+Info: Cell O_sdram_addr[2] not found
+Info: Cell O_sdram_addr[3] not found
+Info: Cell O_sdram_addr[4] not found
+Info: Cell O_sdram_addr[5] not found
+Info: Cell O_sdram_addr[6] not found
+Info: Cell O_sdram_addr[7] not found
+Info: Cell O_sdram_addr[8] not found
+Info: Cell O_sdram_addr[9] not found
+Info: Cell O_sdram_addr[10] not found
+Info: Cell O_sdram_ba[0] not found
+Info: Cell O_sdram_ba[1] not found
+Info: Cell IO_sdram_dq[0] not found
+Info: Cell IO_sdram_dq[1] not found
+Info: Cell IO_sdram_dq[2] not found
+Info: Cell IO_sdram_dq[3] not found
+Info: Cell IO_sdram_dq[4] not found
+Info: Cell IO_sdram_dq[5] not found
+Info: Cell IO_sdram_dq[6] not found
+Info: Cell IO_sdram_dq[7] not found
+Info: Cell IO_sdram_dq[8] not found
+Info: Cell IO_sdram_dq[9] not found
+Info: Cell IO_sdram_dq[10] not found
+Info: Cell IO_sdram_dq[11] not found
+Info: Cell IO_sdram_dq[12] not found
+Info: Cell IO_sdram_dq[13] not found
+Info: Cell IO_sdram_dq[14] not found
+Info: Cell IO_sdram_dq[15] not found
+Info: Cell IO_sdram_dq[16] not found
+Info: Cell IO_sdram_dq[17] not found
+Info: Cell IO_sdram_dq[18] not found
+Info: Cell IO_sdram_dq[19] not found
+Info: Cell IO_sdram_dq[20] not found
+Info: Cell IO_sdram_dq[21] not found
+Info: Cell IO_sdram_dq[22] not found
+Info: Cell IO_sdram_dq[23] not found
+Info: Cell IO_sdram_dq[24] not found
+Info: Cell IO_sdram_dq[25] not found
+Info: Cell IO_sdram_dq[26] not found
+Info: Cell IO_sdram_dq[27] not found
+Info: Cell IO_sdram_dq[28] not found
+Info: Cell IO_sdram_dq[29] not found
+Info: Cell IO_sdram_dq[30] not found
+Info: Cell IO_sdram_dq[31] not found
+Info: Reading constraints...
+Info: Create constant nets...
+Info: Modify LUTs...
+Info: Pack IOBs...
+Info: Pack I3C IOs...
+Info: Pack MIPI IOs...
+Info: Pack diff IOBs...
+Info: Pack FFs into IO cells...
+Info: Pack IODELAY...
+Info: Pack Input Edge Monitors...
+Info: Pack IO logic...
+Info: Pack DESER16 logic...
+Info: Pack GSR...
+Info: Pack HCLK cells...
+Info: Pack DLLDLYs...
+Info: Pack wide LUTs...
+Info: Packed MUX2_LUT8:2, MUX2_LU7:12, MUX2_LUT6:15, MUX2_LUT5:607
+Info: Pack ALUs...
+Info: Pack SSRAMs...
+Info: Constrained 1257 LUTFF pairs.
+Info: Pack PLL...
+Info: Pack ADC...
+Info: Pack BSRAMs...
+Info: Pack DSP...
+Info: Pack INV...
+Info: Pack buffered nets...
+Info: Pack EMCU and UserFlash cells...
+Info: Pack UserFlash cells...
+Info: Pack DQCE cells...
+Info: Pack DCS cells...
+Info: Checksum: 0xefb0795c
+
+Info: Device utilisation:
+Info: 	                 VCC:       1/      1   100%
+Info: 	                 IOB:       7/    384     1%
+Info: 	                LUT4:    6976/  20736    33%
+Info: 	            IOLOGICI:       0/    384     0%
+Info: 	            IOLOGICO:       0/    384     0%
+Info: 	           MUX2_LUT5:     701/  10368     6%
+Info: 	           MUX2_LUT6:      47/   5184     0%
+Info: 	           MUX2_LUT7:      16/   2592     0%
+Info: 	           MUX2_LUT8:       2/   2592     0%
+Info: 	                 ALU:    2334/  15552    15%
+Info: 	                 GND:       1/      1   100%
+Info: 	                 DFF:    4234/  15552    27%
+Info: 	           RAM16SDP4:       0/    648     0%
+Info: 	               BSRAM:      12/     46    26%
+Info: 	              ALU54D:       0/     24     0%
+Info: 	     MULTADDALU18X18:       0/     24     0%
+Info: 	        MULTALU18X18:       0/     24     0%
+Info: 	        MULTALU36X18:       0/     24     0%
+Info: 	           MULT36X36:       0/     12     0%
+Info: 	           MULT18X18:       5/     48    10%
+Info: 	             MULT9X9:       0/     96     0%
+Info: 	              PADD18:       0/     48     0%
+Info: 	               PADD9:       0/     96     0%
+Info: 	                 GSR:       1/      1   100%
+Info: 	                 OSC:       0/      1     0%
+Info: 	                rPLL:       0/      2     0%
+Info: 	                BUFG:       1/     24     4%
+Info: 	                DQCE:       0/     24     0%
+Info: 	                 DCS:       0/      8     0%
+Info: 	               DHCEN:       0/     24     0%
+Info: 	              CLKDIV:       0/      8     0%
+Info: 	             CLKDIV2:       0/     16     0%
+
+Info: Running custom HCLK placer...
+Info: Placed 0 cells based on constraints.
+Info: Creating initial analytic placement for 7009 cells, random placement wirelen = 413562.
+Info:     at initial placer iter 0, wirelen = 3066
+Info:     at initial placer iter 1, wirelen = 2880
+Info:     at initial placer iter 2, wirelen = 2344
+Info:     at initial placer iter 3, wirelen = 2283
+Info: Running main analytical placer, max placement attempts per cell = 25769020.
+Info:     at iteration #1, type ALL: wirelen solved = 2702, spread = 96925, legal = 202010; time = 9.55s
+Info:     at iteration #2, type ALL: wirelen solved = 6610, spread = 80339, legal = 157094; time = 7.14s
+Info:     at iteration #3, type ALL: wirelen solved = 14260, spread = 67928, legal = 148305; time = 9.08s
+Info:     at iteration #4, type ALL: wirelen solved = 18231, spread = 73104, legal = 150873; time = 10.72s
+Info:     at iteration #5, type ALL: wirelen solved = 21147, spread = 64970, legal = 124968; time = 8.47s
+Info:     at iteration #6, type ALL: wirelen solved = 23159, spread = 58203, legal = 118521; time = 10.76s
+Info:     at iteration #7, type ALL: wirelen solved = 25169, spread = 51791, legal = 114907; time = 14.03s
+Info:     at iteration #8, type ALL: wirelen solved = 27861, spread = 58443, legal = 110778; time = 13.64s
+Info:     at iteration #9, type ALL: wirelen solved = 29406, spread = 61907, legal = 104158; time = 13.16s
+Info:     at iteration #10, type ALL: wirelen solved = 30788, spread = 58572, legal = 96766; time = 12.42s
+Info:     at iteration #11, type ALL: wirelen solved = 32029, spread = 58984, legal = 93772; time = 8.50s
+Info:     at iteration #12, type ALL: wirelen solved = 32873, spread = 59539, legal = 95450; time = 7.33s
+Info:     at iteration #13, type ALL: wirelen solved = 34873, spread = 64653, legal = 94448; time = 7.87s
+Info:     at iteration #14, type ALL: wirelen solved = 37181, spread = 56899, legal = 88415; time = 4.47s
+Info:     at iteration #15, type ALL: wirelen solved = 36966, spread = 56237, legal = 86799; time = 4.17s
+Info:     at iteration #16, type ALL: wirelen solved = 38231, spread = 55332, legal = 82321; time = 3.44s
+Info:     at iteration #17, type ALL: wirelen solved = 39310, spread = 60524, legal = 87202; time = 3.06s
+Info:     at iteration #18, type ALL: wirelen solved = 41525, spread = 59406, legal = 83257; time = 2.76s
+Info:     at iteration #19, type ALL: wirelen solved = 42153, spread = 59305, legal = 82575; time = 2.94s
+Info:     at iteration #20, type ALL: wirelen solved = 41947, spread = 58296, legal = 83648; time = 5.07s
+Info:     at iteration #21, type ALL: wirelen solved = 44102, spread = 65493, legal = 89704; time = 4.41s
+Info: HeAP Placer Time: 167.46s
+Info:   of which solving equations: 17.50s
+Info:   of which spreading cells: 1.08s
+Info:   of which strict legalisation: 146.77s
+
+Info: Running simulated annealing placer for refinement.
+Info:   at iteration #1: temp = 0.000000, timing cost = 266, wirelen = 82321
+Info:   at iteration #5: temp = 0.000000, timing cost = 92, wirelen = 68726
+Info:   at iteration #10: temp = 0.000000, timing cost = 78, wirelen = 65142
+Info:   at iteration #15: temp = 0.000000, timing cost = 75, wirelen = 63186
+Info:   at iteration #20: temp = 0.000000, timing cost = 71, wirelen = 61879
+Info:   at iteration #25: temp = 0.000000, timing cost = 69, wirelen = 61521
+Info:   at iteration #30: temp = 0.000000, timing cost = 68, wirelen = 61345
+Info:   at iteration #35: temp = 0.000000, timing cost = 67, wirelen = 61286
+Info:   at iteration #36: temp = 0.000000, timing cost = 68, wirelen = 61276 
+Info: SA placement time 58.80s
+
+Info: Max frequency for clock     'u.clk': 441.31 MHz (PASS at 42.95 MHz)
+Info: Max frequency for clock 'u.clk_eng': 59.99 MHz (PASS at 42.95 MHz)
+
+Info: Max delay posedge u.clk     -> posedge u.clk_eng: 5.42 ns
+Info: Max delay posedge u.clk_eng -> posedge u.clk    : 0.27 ns
+
+Info: Slack histogram:
+Info:  legend: * represents 24 endpoint(s)
+Info:          + represents [1,24) endpoint(s)
+Info: [  6612,   7433) |+
+Info: [  7433,   8254) | 
+Info: [  8254,   9075) | 
+Info: [  9075,   9896) | 
+Info: [  9896,  10717) |+
+Info: [ 10717,  11538) |+
+Info: [ 11538,  12359) |+
+Info: [ 12359,  13180) |***+
+Info: [ 13180,  14001) |**+
+Info: [ 14001,  14822) |*+
+Info: [ 14822,  15643) |***+
+Info: [ 15643,  16464) |**+
+Info: [ 16464,  17285) |************+
+Info: [ 17285,  18106) |*****+
+Info: [ 18106,  18927) |****+
+Info: [ 18927,  19748) |********+
+Info: [ 19748,  20569) |************+
+Info: [ 20569,  21390) |********************+
+Info: [ 21390,  22211) |******************+
+Info: [ 22211,  23032) |************************************************************ 
+Info: Checksum: 0x835251b3
+Info: Routing globals...
+Info:     'u.clk' net was routed.
+Info:     'u.clk_eng' net was routed using global resources only.
+Info:     'u.a_data[7]' is routed using segments.
+Info:     'u.a_data[3]' is routed using segments.
+Info:     'u.a_data[2]' is routed using segments.
+Info:     'u.a_data[4]' is routed using segments.
+Info:     'u.a_data[0]' is routed using segments.
+Info:     'u.a_data[1]' is routed using segments.
+Info:     'u.u_engine.cand_n_LUT4_I0_I3[1]' is routed using segments.
+Info:     'u.a_data[6]' is routed using segments.
+Info:     'u.a_data[5]' is routed using segments.
+Info:     'u.u_engine.vwe_DFFR_Q_RESET_LUT2_I1_F' is routed using segments.
+Info:     'u.u_engine.cnt_skip_DFFRE_Q_14_D_MUX2_LUT5_O_S0[1]' is routed using segments.
+Info:     'u.u_engine.fmode_LUT4_I0_2_F_LUT4_I3_F_LUT4_F_1_I3_LUT4_F_I3[1]' is routed using segments.
+Info:     'u.u_engine.dlow_DFFE_Q_10_D_MUX2_LUT5_O_I0_LUT3_F_I2[0]' is routed using segments.
+Info:     'u.u_engine.e_core_wr_DFFR_Q_D_LUT3_F_I2_LUT2_F_I1_LUT2_I1_F[0]' is routed using segments.
+Info:     'u.u_engine.fmode_LUT4_I0_2_F_LUT4_I3_F_LUT4_F_I0_LUT2_F_I0_LUT2_I0_F_LUT2_I1_F[4]' is routed using segments.
+Info:     'u.u_engine.fymax_r_DFFE_Q_10_D_MUX2_LUT5_O_I1_LUT1_F_I0[2]' is routed using segments.
+Info:     'u.ce_s_LUT2_I0_F_LUT2_F_I1_LUT4_I1_I3[2]' is routed using segments.
+Info:     'u.u_engine.u_core.start_LUT4_I2_F_MUX2_LUT5_I1_O_LUT2_F_I0_LUT2_I1_F_LUT3_I1_F[1]' is routed using segments.
+Info:     'u.u_engine.cand_n_LUT4_I0_I3_LUT2_F_I1_LUT4_I2_I0_LUT4_F_I2[1]' is routed using segments.
+Info:     'u.u_engine.fmode_LUT4_I0_2_F_LUT4_I3_F_LUT4_F_I0_LUT2_F_I0_LUT2_I0_F_LUT3_I2_F' is routed using segments.
+Info:     'u.u_engine.e_core_wr_DFFR_Q_D_LUT2_I1_F' is routed using segments.
+Info:     'u.u_engine.swe_DFFR_Q_D_LUT4_F_I2_LUT3_I2_F' is routed using segments.
+Info:     'u.u_engine.z_core_wr_DFFR_Q_RESET_LUT2_F_I0_LUT4_I2_1_I3[2]' is routed using segments.
+Info:     'u.u_engine.e_core_wr' is routed using segments.
+Info:     'u.u_engine.hix_DFFE_Q_CE' is routed using segments.
+Info:     'u.u_engine.hiy_DFFE_Q_D_LUT3_F_I2_LUT4_F_I3_LUT4_I0_I3_MUX2_LUT5_O_S0_MUX2_LUT5_S0_O_LUT2_I0_F' is routed using segments.
+Info:     'u.u_engine.z_core_wr_DFFR_Q_RESET_LUT2_F_I0_LUT4_I2_F_LUT3_I2_F' is routed using segments.
+Info:     'u.u_engine.e_core_wr_DFFR_Q_D_LUT3_F_I2_LUT4_I3_I0_LUT3_F_I1_LUT4_I2_F_LUT2_I1_F[2]' is routed using segments.
+Info:     'u.u_engine.den[17]' is routed using segments.
+Info:     'u.u_engine.cand_n_LUT4_I0_I3_LUT2_F_I1_LUT4_I2_I0_LUT4_F_I2_LUT2_I1_F[1]' is routed using segments.
+Info:     'u.u_engine.a1_DFFE_Q_CE' is routed using segments.
+Info:     'u.u_engine.u_core.col_DFFE_Q_D_LUT3_I2_F_DFF_D_Q[3]' is routed using segments.
+
+Info: Routing..
+Info: Setting up routing queue.
+Info: Routing 34785 arcs.
+Info:            |   (re-)routed arcs  |   delta    | remaining|       time spent     |
+Info:    IterCnt |  w/ripup   wo/ripup |  w/r  wo/r |      arcs| batch(sec) total(sec)|
+Info:       1000 |       21        978 |   21   978 |     33809|       2.81       2.81|
+Info:       2000 |       58       1941 |   37   963 |     32846|       1.69       4.50|
+Info:       3000 |       66       2784 |    8   843 |     31854|       1.25       5.75|
+Info:       4000 |       79       3447 |   13   663 |     30867|       1.15       6.89|
+Info:       5000 |       85       4105 |    6   658 |     29875|       1.00       7.90|
+Info:       6000 |       88       4816 |    3   711 |     28878|       0.67       8.57|
+Info:       7000 |       91       5736 |    3   920 |     27882|       1.28       9.85|
+Info:       8000 |       93       6659 |    2   923 |     26884|       1.37      11.22|
+Info:       9000 |       93       7575 |    0   916 |     25884|       1.19      12.41|
+Info:      10000 |       97       8491 |    4   916 |     24888|       1.66      14.07|
+Info:      11000 |      102       9413 |    5   922 |     23893|       1.79      15.86|
+Info:      12000 |      109      10318 |    7   905 |     22901|       1.56      17.42|
+Info:      13000 |      119      11222 |   10   904 |     21911|       1.43      18.85|
+Info:      14000 |      127      12114 |    8   892 |     20923|       1.47      20.32|
+Info:      15000 |      141      12992 |   14   878 |     19941|       1.67      21.99|
+Info:      16000 |      153      13871 |   12   879 |     18957|       1.66      23.65|
+Info:      17000 |      163      14786 |   10   915 |     17968|       1.96      25.61|
+Info:      18000 |      185      15677 |   22   891 |     16999|       1.83      27.44|
+Info:      19000 |      210      16558 |   25   881 |     16050|       1.66      29.10|
+Info:      20000 |      230      17452 |   20   894 |     15071|       1.84      30.94|
+Info:      21000 |      260      18331 |   30   879 |     14119|       2.13      33.06|
+Info:      22000 |      300      19219 |   40   888 |     13175|       2.02      35.09|
+Info:      23000 |      345      20080 |   45   861 |     12231|       2.45      37.54|
+Info:      24000 |      390      20953 |   45   873 |     11291|       3.00      40.53|
+Info:      25000 |      455      21804 |   65   851 |     10367|       2.27      42.81|
+Info:      26000 |      527      22660 |   72   856 |      9491|       2.82      45.63|
+Info:      27000 |      590      23515 |   63   855 |      8560|       2.46      48.09|
+Info:      28000 |      690      24328 |  100   813 |      7720|       3.07      51.16|
+Info:      29000 |      802      25145 |  112   817 |      6894|       3.07      54.23|
+Info:      30000 |      920      25952 |  118   807 |      6066|       3.28      57.51|
+Info:      31000 |     1094      26709 |  174   757 |      5355|       4.02      61.53|
+Info:      32000 |     1252      27483 |  158   774 |      4549|       3.69      65.21|
+Info:      33000 |     1394      28282 |  142   799 |      3742|       3.58      68.79|
+Info:      34000 |     1571      29044 |  177   762 |      2985|       4.31      73.10|
+Info:      35000 |     1763      29780 |  192   736 |      2259|       4.24      77.34|
+Info:      36000 |     1972      30508 |  209   728 |      1565|       4.38      81.72|
+Info:      37000 |     2212      31218 |  240   710 |       976|       4.65      86.38|
+Info:      38000 |     2503      31888 |  291   670 |       454|       5.62      91.99|
+Info:      38721 |     2688      32384 |  185   496 |         0|       3.65      95.65|
+Info: Routing complete.
+Info: Router1 time 95.65s
+Info: Checksum: 0xb27177b8
+
+Info: Critical path report for clock 'u.clk' (posedge -> posedge):
+Info:       type curr  total name
+Info:   clk-to-q  0.23  0.23 Source u.bus_ioreq_DFF_Q.Q
+Info:    routing  0.17  0.40 Net sh[3] (4,34) -> (3,34)
+Info:                          Sink u.bus_valid_LUT4_I2.I1
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_bus.v:31.23-31.32
+Info:      logic  0.57  0.97 Source u.bus_valid_LUT4_I2.F
+Info:    routing  0.00  0.97 Net u.bus_valid_LUT4_I2_F (3,34) -> (3,34)
+Info:                          Sink u.bus_valid_LUT4_I2_F_MUX2_LUT5_I0.I0
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:151.9-151.11
+Info:      logic  0.27  1.24 Source u.bus_valid_LUT4_I2_F_MUX2_LUT5_I0.O
+Info:    routing  0.40  1.64 Net u.bus_valid_LUT4_I2_F_MUX2_LUT5_I0_O[0] (3,34) -> (2,33)
+Info:                          Sink u.req_t_DFFRE_Q.CE
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:130.20-130.21
+Info:      setup  0.04  1.67 Source u.req_t_DFFRE_Q.CE
+Info: 1.10 ns logic, 0.57 ns routing
+
+Info: Critical path report for clock 'u.clk_eng' (posedge -> posedge):
+Info:       type curr  total name
+Info:   clk-to-q  0.23  0.23 Source u.u_engine.hiy_DFFE_Q_13.Q
+Info:    routing  1.80  2.04 Net u.u_engine.hiy[3] (25,2) -> (12,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.I1
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:445.38-445.41
+Info:      logic  0.57  2.60 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.60 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN (12,24) -> (12,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.64 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.64 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN (12,24) -> (13,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.67 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.67 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN (13,24) -> (13,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.71 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.71 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN (13,24) -> (13,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.74 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.74 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN (13,24) -> (13,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.78 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.78 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN (13,24) -> (13,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.81 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.81 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN (13,24) -> (13,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.85 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.85 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN (13,24) -> (14,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.88 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.88 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN (14,24) -> (14,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.92 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.92 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT_CIN (14,24) -> (14,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.95 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.95 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT_CIN (14,24) -> (14,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  2.99 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN_ALU_COUT.COUT
+Info:    routing  0.00  2.99 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_CIN (14,24) -> (14,24)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:407.19-407.42
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.47  3.46 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT.SUM
+Info:    routing  0.40  3.86 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_SUM_CIN_ALU_COUT_SUM[2] (14,24) -> (14,23)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_CIN_ALU_COUT.I0
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:130.20-130.21
+Info:      logic  0.55  4.41 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_CIN_ALU_COUT.COUT
+Info:    routing  0.00  4.41 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_CIN (14,23) -> (14,23)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0.CIN
+Info:                          Defined in:
+Info:                               ../rtl/geo3d_engine.v:398.25-398.49
+Info:                               /share/gowin/arith_map.v:57.7-63.5
+Info:                               /share/gowin/cells_sim.v:1033.25-1033.29
+Info:      logic  0.04  4.45 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0.COUT
+Info:    routing  0.00  4.45 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_TAIL_ALULC (14,23) -> (14,23)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_TAIL_ALULC.CIN
+Info:      logic  0.47  4.91 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_TAIL_ALULC.SUM
+Info:    routing  0.47  5.39 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_COUT[0] (14,23) -> (16,25)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_COUT_ALU_COUT_HEAD_ALULC.I0
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:130.20-130.21
+Info:      logic  0.55  5.94 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_COUT_ALU_COUT_HEAD_ALULC.COUT
+Info:    routing  0.00  5.94 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_COUT_ALU_COUT_HEAD_ALULC (16,25) -> (16,25)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_COUT_ALU_COUT.CIN
+Info:      logic  0.04  5.97 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_COUT_ALU_COUT.COUT
+Info:    routing  0.00  5.97 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_COUT_ALU_COUT_TAIL_ALULC (16,25) -> (16,25)
+Info:                          Sink u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_COUT_ALU_COUT_TAIL_ALULC.CIN
+Info:      logic  0.47  6.44 Source u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_COUT_ALU_COUT_TAIL_ALULC.SUM
+Info:    routing  0.17  6.61 Net u.u_engine.py_DFFE_Q_4_D_LUT4_F_I1_ALU_I0_COUT[2] (16,25) -> (16,26)
+Info:                          Sink u.u_engine.hiy_DFFE_Q_D_LUT3_F_I2_LUT4_F_I3_LUT4_I0_F_MUX2_LUT5_O_1_I1_LUT4_F.I2
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:130.20-130.21
+Info:      logic  0.46  7.07 Source u.u_engine.hiy_DFFE_Q_D_LUT3_F_I2_LUT4_F_I3_LUT4_I0_F_MUX2_LUT5_O_1_I1_LUT4_F.F
+Info:    routing  0.00  7.07 Net u.u_engine.hiy_DFFE_Q_D_LUT3_F_I2_LUT4_F_I3_LUT4_I0_F_MUX2_LUT5_O_1_I1 (16,26) -> (16,26)
+Info:                          Sink u.u_engine.hiy_DFFE_Q_D_LUT3_F_I2_LUT4_F_I3_LUT4_I0_F_MUX2_LUT5_O_1.I1
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:151.13-151.15
+Info:      logic  0.27  7.34 Source u.u_engine.hiy_DFFE_Q_D_LUT3_F_I2_LUT4_F_I3_LUT4_I0_F_MUX2_LUT5_O_1.O
+Info:    routing  0.85  8.19 Net u.u_engine.cand_n_LUT4_I0_1_F_LUT4_F_I2_LUT2_I0_F[1] (16,26) -> (20,28)
+Info:                          Sink u.u_engine.hix_DFFE_Q_CE_MUX2_LUT5_O_I1_LUT4_F.I2
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:130.20-130.21
+Info:      logic  0.46  8.65 Source u.u_engine.hix_DFFE_Q_CE_MUX2_LUT5_O_I1_LUT4_F.F
+Info:    routing  0.00  8.65 Net u.u_engine.hix_DFFE_Q_CE_MUX2_LUT5_O_I1 (20,28) -> (20,28)
+Info:                          Sink u.u_engine.hix_DFFE_Q_CE_MUX2_LUT5_O.I1
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:151.13-151.15
+Info:      logic  0.27  8.92 Source u.u_engine.hix_DFFE_Q_CE_MUX2_LUT5_O.O
+Info:    routing  1.54  10.46 Net u.u_engine.hix_DFFE_Q_CE (20,28) -> (15,37)
+Info:                          Sink u.u_engine.hiy_DFFE_Q_8.CE
+Info:      setup  0.04  10.49 Source u.u_engine.hiy_DFFE_Q_8.CE
+Info: 5.26 ns logic, 5.24 ns routing
+
+Info: Critical path report for cross-domain path 'posedge u.clk' -> 'posedge u.clk_eng':
+Info:       type curr  total name
+Info:   clk-to-q  0.23  0.23 Source u.a_data_DFFE_Q_3.Q
+Info:    routing  1.15  1.38 Net u.a_data[3] (19,26) -> (12,26)
+Info:                          Sink u.u_engine.rptr_DFFR_Q_1_D_LUT4_F_I2_MUX2_LUT5_O_I0_LUT4_F.I0
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:130.20-130.21
+Info:      logic  0.55  1.93 Source u.u_engine.rptr_DFFR_Q_1_D_LUT4_F_I2_MUX2_LUT5_O_I0_LUT4_F.F
+Info:    routing  0.00  1.93 Net u.u_engine.rptr_DFFR_Q_1_D_LUT4_F_I2_MUX2_LUT5_O_I0 (12,26) -> (12,26)
+Info:                          Sink u.u_engine.rptr_DFFR_Q_1_D_LUT4_F_I2_MUX2_LUT5_O.I0
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:151.9-151.11
+Info:      logic  0.27  2.20 Source u.u_engine.rptr_DFFR_Q_1_D_LUT4_F_I2_MUX2_LUT5_O.O
+Info:    routing  1.41  3.61 Net u.u_engine.rptr_DFFR_Q_1_D_LUT4_F_I2[2] (12,26) -> (5,15)
+Info:                          Sink u.u_engine.rptr_DFFR_Q_1_D_LUT4_F.I2
+Info:                          Defined in:
+Info:                               /share/gowin/cells_map.v:130.20-130.21
+Info:      logic  0.46  4.07 Source u.u_engine.rptr_DFFR_Q_1_D_LUT4_F.F
+Info:    routing  0.00  4.07 Net u.u_engine.rptr_DFFR_Q_1_D (5,15) -> (5,15)
+Info:                          Sink u.u_engine.rptr_DFFR_Q_1.D
+Info:      setup  0.04  4.10 Source u.u_engine.rptr_DFFR_Q_1.D
+Info: 1.54 ns logic, 2.56 ns routing
+
+Info: Max frequency for clock     'u.clk': 597.37 MHz (PASS at 42.95 MHz)
+Info: Max frequency for clock 'u.clk_eng': 95.28 MHz (PASS at 42.95 MHz)
+
+Info: Max delay posedge u.clk -> posedge u.clk_eng: 4.10 ns
+
+Info: Slack histogram:
+Info:  legend: * represents 6 endpoint(s)
+Info:          + represents [1,6) endpoint(s)
+Info: [ 12787,  13291) |*+
+Info: [ 13291,  13795) |*****+
+Info: [ 13795,  14299) |****+
+Info: [ 14299,  14803) |**+
+Info: [ 14803,  15307) |********+
+Info: [ 15307,  15811) |**+
+Info: [ 15811,  16315) | 
+Info: [ 16315,  16819) |+
+Info: [ 16819,  17323) |*+
+Info: [ 17323,  17827) |*********+
+Info: [ 17827,  18331) |*********+
+Info: [ 18331,  18835) |*******************+
+Info: [ 18835,  19339) |************************************+
+Info: [ 19339,  19843) |**************************************+
+Info: [ 19843,  20347) |***********************************+
+Info: [ 20347,  20851) |************************+
+Info: [ 20851,  21355) |*************************+
+Info: [ 21355,  21859) |************************************+
+Info: [ 21859,  22363) |************************************************************ 
+Info: [ 22363,  22867) |*********************+
+
+Info: Program finished normally.
