@@ -15,6 +15,9 @@
         <File path="src/sdram/ip_sdram_tangnano20k_c.v" type="file.verilog" enable="1"/>
         <File path="src/tangnano20k_vdp_cartridge.v" type="file.verilog" enable="1"/>
         <File path="src/v9968/vdp.v" type="file.verilog" enable="1"/>
+        <File path="../../geo3d/rtl/geo3d_core.v" type="file.verilog" enable="1"/>
+        <File path="../../geo3d/rtl/geo3d_engine.v" type="file.verilog" enable="1"/>
+        <File path="../../geo3d/rtl/geo3d_bus.v" type="file.verilog" enable="1"/>
         <File path="src/v9968/vdp_color_palette.v" type="file.verilog" enable="1"/>
         <File path="src/v9968/vdp_color_palette_ram.v" type="file.verilog" enable="1"/>
         <File path="src/v9968/vdp_command.v" type="file.verilog" enable="1"/>
