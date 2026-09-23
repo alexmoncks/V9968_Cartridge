@@ -231,7 +231,7 @@ edge), 256 KB compared byte by byte, 0 differences. That model then checks geo3d
 (2,700 texels) and 623 LINE spans (6,700 pixels) per frame: under 1 ms of VDP
 pixel work. Measured end to end in `sim/tb_system.v`, the longest frame (RUN set
 until geo3d reports idle: geometry, sorting, span setup, command issue and
-drawing) takes 3.4 ms, well inside a 60 Hz frame. In V9938-compatible timing LINE costs about 265 clocks per pixel, so
+drawing) takes 4.1 ms, well inside a 60 Hz frame (16.7 ms). In V9938-compatible timing LINE costs about 265 clocks per pixel, so
 high-speed mode is what makes filled and textured objects practical.
 
 ### Known limits (next steps)
