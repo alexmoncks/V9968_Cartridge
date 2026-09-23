@@ -9,12 +9,15 @@
 ; VRAM uploads, page flips). The geometry is computed by geo3d in the FPGA;
 ; the Z80 only moves bytes, as in the .COM demos.
 ;
-; Hardware: V9968 cartridge with the geo3d build, DIP switch at 88h
-; (VDP 88h-8Ch, geo3d 8Dh/8Fh). The internal VDP is left alone.
-; Output: the V9968 cartridge HDMI port. 30 frames per second.
-; Space bar: next demo. The sequence loops forever.
+; Ports: PORT_BASE comes from rom_ports.asm (written by build_rom.py):
+;   88h  GEO3D.ROM, real hardware: V9968 cartridge with the geo3d build, DIP
+;        switch at 88h (VDP 88h-8Ch, geo3d 8Dh/8Fh). The internal VDP is left
+;        alone. Output: the V9968 cartridge HDMI port.
+;   98h  GEO3D_98.ROM, emulator profile (openMSX V9968 fork, -ext geo3d): the
+;        V9968 is the machine's VDP (98h-9Ch), geo3d on 9Dh/9Fh.
+; 30 frames per second. Space bar: next demo. The sequence loops forever.
 ;
-; Stream opcodes (little-endian):
+; Stream opcodes (little-endian), ports for the 88h profile:
 ;   00 END                          next demo
 ;   01 GEO   idx n data[n]          OUT 8Dh,idx then n bytes to 8Fh
 ;   02 GEOD  n data[n]              n bytes to 8Fh (index unchanged)
@@ -33,13 +36,15 @@
 ; Assemble: z80asm -o bank0.bin geo3d_rom.asm (build_rom.py does it all)
 ; ============================================================================
 
-VDP_DATA:   equ 0x88
-VDP_CTRL:   equ 0x89
-VDP_PAL:    equ 0x8A
-VDP_IND:    equ 0x8B
-VDP_PORT4:  equ 0x8C
-GEO_IDX:    equ 0x8D
-GEO_DAT:    equ 0x8F
+        include "rom_ports.asm"     ; PORT_BASE: 0x88 or 0x98
+
+VDP_DATA:   equ PORT_BASE
+VDP_CTRL:   equ PORT_BASE + 1
+VDP_PAL:    equ PORT_BASE + 2
+VDP_IND:    equ PORT_BASE + 3
+VDP_PORT4:  equ PORT_BASE + 4
+GEO_IDX:    equ PORT_BASE + 5
+GEO_DAT:    equ PORT_BASE + 7
 
 PPI_B:      equ 0xA9            ; keyboard column input
 PPI_C:      equ 0xAA            ; keyboard row select (low nibble)

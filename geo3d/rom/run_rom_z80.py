@@ -9,7 +9,9 @@ port simulated. Every OUT is recorded and decoded like vdp_cpu_interface.v
 the traffic the streams were built from (rom/out/streams.json), which is the
 traffic checked against the RTL.
 
-Usage: run_rom_z80.py [space_at_flip]
+Usage: run_rom_z80.py [--base 0x88|0x98] [space_at_flip]
+  --base: port profile, 0x88 (default, GEO3D.ROM) or 0x98 (GEO3D_98.ROM, the
+  emulator profile); build it first with build_rom.py --base.
   space_at_flip: also test the space bar, pressed at that page flip of the
   first demo (the player must move to the second demo).
 """
@@ -23,14 +25,24 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
 BANK = 16384
 
-rom = open(os.path.join(OUT, "GEO3D.ROM"), "rb").read()
+args = sys.argv[1:]
+BASE = 0x88
+if args[:1] == ["--base"]:
+    BASE = int(args[1], 0)
+    args = args[2:]
+assert BASE in (0x88, 0x98), hex(BASE)
+SUFFIX = "" if BASE == 0x88 else f"_{BASE:02x}"
+P_DATA, P_CTRL, P_PAL, P_IND, P_PORT4 = (BASE + i for i in range(5))
+P_GIDX, P_GDAT = BASE + 5, BASE + 7
+
+rom = open(os.path.join(OUT, "GEO3D.ROM" if BASE == 0x88 else f"GEO3D_{BASE:02X}.ROM"), "rb").read()
 labels = {}
-for line in open(os.path.join(OUT, "labels.txt")):
+for line in open(os.path.join(OUT, f"labels{SUFFIX}.txt")):
     p = line.replace(":", " ").split()
     if len(p) >= 3 and p[1] == "equ":
         labels[p[0]] = int(p[2].replace("$", ""), 16)
 exp = json.load(open(os.path.join(OUT, "streams.json")))
-SPACE_AT = int(sys.argv[1]) if len(sys.argv) > 1 else None
+SPACE_AT = int(args[0]) if args else None
 
 m = z80.Z80Machine()
 m.set_memory_block(0x4000, rom[0:BANK])                # page 1: bank 0
@@ -48,19 +60,19 @@ events = []           # ("G", sel, b) / ("RUN",) / ("P", port, b) / ("INIT",)
 
 def on_out(port, v):
     p = port & 0xFF
-    if p == 0x8D:
+    if p == P_GIDX:
         events.append(("G", 0, v))
         st["idx"] = v
-    elif p == 0x8F:
+    elif p == P_GDAT:
         events.append(("G", 1, v))
         if st["idx"] == 0x48 and v & 1:
             events.append(("RUN",))
             st["geo"] = 2
         if st["idx"] is not None and st["idx"] >> 4 == 4:
             st["idx"] = 0x40 | ((st["idx"] + 1) & 0xF)
-    elif p in (0x88, 0x89, 0x8A, 0x8B):
+    elif p in (P_DATA, P_CTRL, P_PAL, P_IND):
         events.append(("P", p, v))
-        if p == 0x89:
+        if p == P_CTRL:
             if st["pend"] is None:
                 st["pend"] = v
             else:
@@ -71,19 +83,19 @@ def on_out(port, v):
                     if r == 2:
                         st["flips"] += 1
                 st["pend"] = None
-    elif p == 0x8C:
+    elif p == P_PORT4:
         events.append(("INIT",))
         st["inits"] += 1
 
 
 def on_in(port):
     p = port & 0xFF
-    if p == 0x8D:
+    if p == P_GIDX:
         if st["geo"]:
             st["geo"] -= 1
             return 0x01
         return 0x00
-    if p == 0x89:
+    if p == P_CTRL:
         if st["r15"] == 0:                    # S#0: F set on every other read
             st["s0"] ^= 1
             return 0x80 if st["s0"] else 0x00
@@ -156,7 +168,7 @@ for e in events:
         cur.append("R")
     else:
         p, v = e[1], e[2]
-        if p == 0x89:
+        if p == P_CTRL:
             if pend is None:
                 pend = v
             else:
@@ -165,11 +177,11 @@ for e in events:
                 else:
                     addr = (r14 << 14) | ((v & 0x3F) << 8) | pend
                 pend = None
-        elif p == 0x8B:
+        elif p == P_IND:
             reg_write(ptr, v)
             if pinc:
                 ptr = (ptr + 1) & 0x3F
-        elif p == 0x88:
+        elif p == P_DATA:
             cur.append(f"X {addr:05x} {v:02x}")
             addr = (addr + 1) & 0x3FFFF
 
@@ -211,5 +223,5 @@ if SPACE_AT is None:
     print(f"sequência: {len(demos) - 1} demos e o recomeço do primeiro "
           f"({'ok' if len(demos) == ndemos + 1 else 'FALHOU'})")
     ok = ok and len(demos) == ndemos + 1
-print("PASS" if ok else "FAIL")
+print(f"portas {BASE:02X}h: " + ("PASS" if ok else "FAIL"))
 sys.exit(0 if ok else 1)
