@@ -9,14 +9,24 @@
 //   offset PORT_INDEX (default 5): index write / status read   (8Dh or 9Dh)
 //   offset PORT_DATA  (default 7): data read / write           (8Fh or 9Fh)
 // Offset 6 (8Eh) is left alone on purpose: 8Eh is used by the MegaRAM.
+//
+// Clocks: the slot bus and the V9968 run on clk (85.9 MHz). The engine runs
+// on clk_eng = clk / 2 (42.95 MHz, clk42m on the cartridge, same source and
+// phase), which doubles its timing margin. Crossings use toggles:
+//   bus -> engine : request toggle, one engine-clock strobe per access
+//   engine -> bus : acknowledge toggle when read data is ready
+//   engine -> VDP : one toggle per command-register write, turned back into
+//                   a single clk pulse (a write is never repeated)
+//   VDP -> engine : CE is a level, sampled directly (related clocks)
 // ============================================================================
 module geo3d_bus #(
     parameter [2:0] PORT_INDEX = 3'd5,
     parameter [2:0] PORT_DATA  = 3'd7
 )(
-    input  wire       clk,
+    input  wire       clk,            // 85.9 MHz: slot bus and VDP
+    input  wire       clk_eng,        // 42.95 MHz: geo3d engine (clk / 2)
     input  wire       reset_n,
-    // from msx_slot
+    // from msx_slot (clk domain)
     input  wire [2:0] bus_address,
     input  wire       bus_ioreq,
     input  wire       bus_write,
@@ -26,34 +36,103 @@ module geo3d_bus #(
     output wire       bus_ready,
     output wire [7:0] bus_rdata,
     output reg        bus_rdata_en,
-    // to the V9968 command engine
-    output wire       cmd_wr,
-    output wire [5:0] cmd_num,
-    output wire [7:0] cmd_data,
+    // to the V9968 command engine (clk domain)
+    output reg        cmd_wr,
+    output reg  [5:0] cmd_num,
+    output reg  [7:0] cmd_data,
     input  wire       cmd_ce,
     output wire       run_busy
 );
-    assign hit       = (bus_address == PORT_INDEX) || (bus_address == PORT_DATA);
-    assign bus_ready = 1'b1;
+    assign hit = (bus_address == PORT_INDEX) || (bus_address == PORT_DATA);
 
-    wire acc    = bus_valid & bus_ioreq & hit;
-    wire wr_stb = acc &  bus_write;
-    wire rd_stb = acc & ~bus_write;
-    wire sel    = (bus_address == PORT_DATA);
+    // ------------------------------------------------ bus side (clk)
+    reg        req_t, busy_f, is_rd;
+    reg        a_sel, a_wr;
+    reg  [7:0] a_data;
+    reg        ack_s1, ack_seen;
+    wire       ack_t;
+    wire [7:0] eng_dout;
 
-    wire [7:0] dout;
+    assign bus_ready = ~busy_f;
+    wire acc = bus_valid & bus_ioreq & hit & ~busy_f;
+
+    always @(posedge clk) begin
+        if (!reset_n) begin
+            req_t <= 1'b0; busy_f <= 1'b0; is_rd <= 1'b0;
+            ack_s1 <= 1'b0; ack_seen <= 1'b0; bus_rdata_en <= 1'b0;
+        end else begin
+            bus_rdata_en <= 1'b0;
+            ack_s1 <= ack_t;
+            if (acc) begin
+                a_sel  <= (bus_address == PORT_DATA);
+                a_wr   <= bus_write;
+                a_data <= bus_wdata;
+                req_t  <= ~req_t;
+                busy_f <= 1'b1;
+                is_rd  <= ~bus_write;
+            end else if (busy_f && ack_s1 != ack_seen) begin
+                ack_seen     <= ack_s1;
+                busy_f       <= 1'b0;
+                bus_rdata_en <= is_rd;
+            end
+        end
+    end
+    assign bus_rdata = eng_dout;
+
+    // ------------------------------------------------ engine side (clk_eng)
+    reg        req_seen, ack_r;
+    reg        e_wr, e_rd;
+    reg        ce_s;
+    wire       e_cmd_wr;
+    wire [5:0] e_cmd_num;
+    wire [7:0] e_cmd_data;
+    reg        cmd_t;
+    reg  [5:0] cmd_num_e;
+    reg  [7:0] cmd_data_e;
+
+    always @(posedge clk_eng) begin
+        if (!reset_n) begin
+            req_seen <= 1'b0; ack_r <= 1'b0; e_wr <= 1'b0; e_rd <= 1'b0;
+            cmd_t <= 1'b0; ce_s <= 1'b0;
+        end else begin
+            e_wr <= 1'b0; e_rd <= 1'b0;
+            ce_s <= cmd_ce;
+            if (req_t != req_seen) begin
+                req_seen <= req_t;
+                e_wr <= a_wr;
+                e_rd <= ~a_wr;
+            end
+            // acknowledge one engine clock after the strobe (dout is then valid)
+            if (e_wr | e_rd) ack_r <= ~ack_r;
+            if (e_cmd_wr) begin
+                cmd_t      <= ~cmd_t;
+                cmd_num_e  <= e_cmd_num;
+                cmd_data_e <= e_cmd_data;
+            end
+        end
+    end
+    assign ack_t = ack_r;
 
     geo3d_engine u_engine (
-        .clk(clk), .rst(~reset_n),
-        .sel(sel), .wr_stb(wr_stb), .rd_stb(rd_stb), .din(bus_wdata), .dout(dout),
-        .cmd_wr(cmd_wr), .cmd_num(cmd_num), .cmd_data(cmd_data), .cmd_ce(cmd_ce),
+        .clk(clk_eng), .rst(~reset_n),
+        .sel(a_sel), .wr_stb(e_wr), .rd_stb(e_rd), .din(a_data), .dout(eng_dout),
+        .cmd_wr(e_cmd_wr), .cmd_num(e_cmd_num), .cmd_data(e_cmd_data), .cmd_ce(ce_s),
         .run_busy(run_busy)
     );
 
-    // engine registers dout on rd_stb; data is valid one clock later
+    // ------------------------------------------------ command writes back to clk
+    reg cmd_seen;
     always @(posedge clk) begin
-        if (!reset_n) bus_rdata_en <= 1'b0;
-        else          bus_rdata_en <= rd_stb;
+        if (!reset_n) begin
+            cmd_seen <= 1'b0; cmd_wr <= 1'b0;
+        end else begin
+            cmd_wr <= 1'b0;
+            if (cmd_t != cmd_seen) begin
+                cmd_seen <= cmd_t;
+                cmd_wr   <= 1'b1;
+                cmd_num  <= cmd_num_e;
+                cmd_data <= cmd_data_e;
+            end
+        end
     end
-    assign bus_rdata = dout;
 endmodule
