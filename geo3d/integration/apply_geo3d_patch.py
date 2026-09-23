@@ -8,8 +8,8 @@ Changes (idempotent, fails loudly if the upstream text moved):
      (ext_cmd_wr/num/data) OR-ed into vdp_command, and exposes CE (ext_cmd_ce).
      Nothing else in the VDP changes; with ext_cmd_wr = 0 it is bit-identical.
   2. src/tangnano20k_vdp_cartridge.v: instantiates geo3d_bus on offsets 5 and 7
-     of the slot's port block, keeps those offsets away from the VDP, and muxes
-     read data / ready.
+     of the slot's port block (bus side on clk85m, engine on clk42m), keeps
+     those offsets away from the VDP, and muxes read data / ready.
   3. tangnano20k_vdp_cartridge.gprj: adds the geo3d RTL files.
 
 Usage: python3 apply_geo3d_patch.py <repo_root>
@@ -72,7 +72,19 @@ def patch_vdp(p: Path):
 def patch_top(p: Path):
     s, crlf = read(p)
     if "geo3d_bus" in s:
-        print(f"  {p.name}: already patched")
+        if "clk_eng" not in s:
+            # upgrade an earlier patch: the engine now runs on clk42m
+            i = s.find("geo3d_bus u_geo3d")
+            j = s.find(");", i)
+            blk, n = re.subn(r"(\n([ \t]*)\.clk\s*\(\s*clk85m\s*\),)",
+                             r"\1\n\2.clk_eng\t\t\t( clk42m\t\t\t\t\t),", s[i:j], count=1)
+            if i < 0 or n != 1:
+                sys.exit("top: geo3d_bus clk hookup not found")
+            s = s[:i] + blk + s[j:]
+            write(p, s, crlf)
+            print(f"  {p.name}: upgraded (clk_eng = clk42m)")
+        else:
+            print(f"  {p.name}: already patched")
         return
     old_mux = re.search(r"\tassign w_bus_rdata\s*=.*?\n\tassign w_bus_rdata_en\s*=.*?\n\tassign w_bus_ready\s*=.*?\n", s, re.S)
     if not old_mux:
@@ -92,6 +104,7 @@ def patch_top(p: Path):
 
 \tgeo3d_bus u_geo3d (
 \t\t.clk\t\t\t\t( clk85m\t\t\t\t\t),
+\t\t.clk_eng\t\t\t( clk42m\t\t\t\t\t),
 \t\t.reset_n\t\t\t( reset_n3\t\t\t\t\t),
 \t\t.bus_address\t\t( w_bus_address\t\t\t\t),
 \t\t.bus_ioreq\t\t\t( w_bus_ioreq\t\t\t\t),
