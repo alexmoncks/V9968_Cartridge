@@ -208,6 +208,7 @@ module tangnano20k_vdp_cartridge (
 
 	geo3d_bus u_geo3d (
 		.clk				( clk85m					),
+		.clk_eng			( clk42m					),
 		.reset_n			( reset_n3					),
 		.bus_address		( w_bus_address				),
 		.bus_ioreq			( w_bus_ioreq				),
