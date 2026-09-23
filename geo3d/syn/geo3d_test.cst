@@ -1,0 +1,22 @@
+// Pinos emprestados do cartucho V9968 (apenas para medir ocupação/timing)
+IO_LOC "clk" 4;
+IO_LOC "rst" 86;
+IO_LOC "a0" 30;
+IO_LOC "wr_stb" 16;
+IO_LOC "rd_stb" 15;
+IO_LOC "din[7]" 73;
+IO_LOC "din[6]" 74;
+IO_LOC "din[5]" 75;
+IO_LOC "din[4]" 85;
+IO_LOC "din[3]" 77;
+IO_LOC "din[2]" 27;
+IO_LOC "din[1]" 28;
+IO_LOC "din[0]" 29;
+IO_LOC "dout[7]" 17;
+IO_LOC "dout[6]" 49;
+IO_LOC "dout[5]" 48;
+IO_LOC "dout[4]" 41;
+IO_LOC "dout[3]" 42;
+IO_LOC "dout[2]" 76;
+IO_LOC "dout[1]" 31;
+IO_LOC "dout[0]" 72;

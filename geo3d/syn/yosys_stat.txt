@@ -1,0 +1,33 @@
+
+4. Printing statistics.
+
+=== geo3d_z80if ===
+
+        +----------Local Count, excluding submodules.
+        | 
+     1881 wires
+     3693 wire bits
+     1881 public wires
+     3693 public wire bits
+        7 ports
+       21 port bits
+     2152 cells
+        1   $scopeinfo
+      521   ALU
+        2   DFF
+      264   DFFE
+        6   DFFR
+      360   DFFRE
+        2   DFFS
+       75   DFFSE
+        1   GND
+       13   IBUF
+       20   LUT1
+      278   LUT2
+      210   LUT3
+      253   LUT4
+        4   MULT18X18
+      133   MUX2_LUT5
+        8   OBUF
+        1   VCC
+
