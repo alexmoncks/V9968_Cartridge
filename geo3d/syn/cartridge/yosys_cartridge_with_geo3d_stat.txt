@@ -5,41 +5,41 @@
 
         +----------Local Count, excluding submodules.
         | 
-    15506 wires
-    38976 wire bits
-    15506 public wires
-    38976 public wire bits
+    19144 wires
+    46925 wire bits
+    19144 public wires
+    46925 public wire bits
        29 ports
        94 port bits
-    21516 cells
+    26290 cells
        35   $scopeinfo
-     1729   ALU
+     2606   ALU
         1   CLKDIV
-      598   DFF
+      874   DFF
        32   DFFCE
-     1892   DFFE
-      154   DFFR
-     3782   DFFRE
+     3117   DFFE
+      167   DFFR
+     4049   DFFRE
        31   DFFS
-      164   DFFSE
+      201   DFFSE
         5   DPX9B
         1   DVI_TX_Top
         1   GND
        18   IBUF
         8   IOBUF
-     1297   LUT1
-     1460   LUT2
-     2536   LUT3
-     5512   LUT4
-        5   MULT18X18
+     1154   LUT1
+     1786   LUT2
+     3636   LUT3
+     6177   LUT4
+        6   MULT18X18
         7   MULT9X9
-     1601   MUX2_LUT5
-      297   MUX2_LUT6
-      125   MUX2_LUT7
-       51   MUX2_LUT8
+     1757   MUX2_LUT5
+      289   MUX2_LUT6
+      114   MUX2_LUT7
+       39   MUX2_LUT8
        68   OBUF
        96   RAM16SDP4
-        3   SDPX9B
+        8   SDPX9B
         4   SPX9
         1   VCC
         2   rPLL
