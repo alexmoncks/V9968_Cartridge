@@ -17,7 +17,9 @@ From that one list:
 Scenes:
   panzoom  textured GEO3D, the camera zooms (focal length) and pans (translation)
   crawl    perspective text crawl: one tilted plane cut into strips, textured by
-           LRMM, while TEXY scrolls through the text kept in VRAM
+           LRMM, while TEXY scrolls through the text kept in VRAM; one row
+           per frame, paced at 0.7 of 30 fps (PACE); crawl_en and crawl_es
+           are the same scene in English and Spanish, crawl is Portuguese
   flyin    the letters arrive one by one over an SCREEN 5 background, then the
            logo turns; the Z80 only rewrites the moving letter's vertices
 
@@ -133,6 +135,15 @@ class Show:
 
     def begin(self, k):
         self.frame = k
+
+    def pace(self, blanks):
+        """Vertical blanks per page flip from here on (the player's PACE; 2 =
+        30 frames per second at 60 Hz, the default of every demo)."""
+        self._op("P", f"P {blanks}")
+
+    def music(self):
+        """Start the ROM's music here (the player's MUSIC; no VDP/geo3d traffic)."""
+        self._op("M", "M")
 
     def run_and_show(self, ctrl, ypage):
         self.w(0, 0x48)
@@ -255,7 +266,7 @@ def write_rtl_files(show, pages, sample):
         if kind == "XB":                          # tb_system.v VRAM starts at zero
             addr, data = show.blocks[int(text.split()[1])]
             keep += [f"X {addr + i:05x} {b:02x}" for i, b in enumerate(data) if b]
-        elif fr is None or fr in sample or kind == "W":
+        elif (fr is None or fr in sample or kind == "W") and kind not in ("P", "M"):   # no port traffic
             keep.append(text)
     open(base + "_sys_sample.txt", "w").write("\n".join(keep) + "\n")
     order = sorted(sample)
@@ -287,8 +298,12 @@ def page_image(page, pal):
     return img.convert("RGB")
 
 
-def render(pages, stats, pal, out, title, loops=1, fps=30, extra=None):
+def render(pages, stats, pal, out, title, loops=1, fps=30, extra=None, blanks=None):
+    """blanks: vertical blanks each page stays on screen (the player's PACE);
+    the video then runs at 60 fps with each page repeated that many times."""
     VW, VH, S = 960, 720, 3
+    if blanks:
+        fps = 60
     f1, f2 = font(22), font(16)
     ox, oy = (VW - W * S) // 2, 10
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
@@ -309,7 +324,8 @@ def render(pages, stats, pal, out, title, loops=1, fps=30, extra=None):
             if extra:
                 info += "   |   " + extra(k)
             d.text((ox, oy + H * S + 40), info, font=f2, fill=(150, 150, 160))
-            proc.stdin.write(canvas.tobytes())
+            for _ in range(blanks[k] if blanks else 1):
+                proc.stdin.write(canvas.tobytes())
     proc.stdin.close()
     proc.wait()
 
@@ -375,26 +391,54 @@ def scene_panzoom():
 
 # ---- crawl
 CRAWL_TITLE = ["GEO3D"]
-CRAWL_SUB = "Um coprocessador 3D para o MSX"
-CRAWL_TEXT = [
-    "Tempos de renascimento. Cartuchos com FPGA dão ao MSX2 um novo VDP, o V9968, "
-    "criado por HRA!, com comandos rápidos e 256 KB de VRAM.",
-    "Mas o Z80 segue sozinho diante da matemática. Matrizes, perspectiva e divisões "
-    "consomem cada ciclo, quadro após quadro.",
-    "No mesmo FPGA nasce o geo3d. Ele gira e projeta os vértices, ordena as faces, "
-    "calcula a luz e entrega ao VDP os comandos LINE e LRMM, linha a linha.",
-    "O Z80 envia poucos bytes por quadro. O VDP busca as texturas na própria VRAM "
-    "e pinta cada pixel.",
-    "Este letreiro, aliás, também é uma textura: um plano inclinado, cortado em "
-    "faixas, que o geo3d desenha enquanto a VRAM rola...",
-]
+# language -> (subtitle, paragraphs); the only text in the demos
+CRAWL = {
+    "pt": ("Um coprocessador 3D para o MSX", [
+        "Tempos de renascimento. Cartuchos com FPGA dão ao MSX2 um novo VDP, o V9968, "
+        "criado por HRA!, com comandos rápidos e 256 KB de VRAM.",
+        "Mas o Z80 segue sozinho diante da matemática. Matrizes, perspectiva e divisões "
+        "consomem cada ciclo, quadro após quadro.",
+        "No mesmo FPGA nasce o geo3d. Ele gira e projeta os vértices, ordena as faces, "
+        "calcula a luz e entrega ao VDP os comandos LINE e LRMM, linha a linha.",
+        "O Z80 envia poucos bytes por quadro. O VDP busca as texturas na própria VRAM "
+        "e pinta cada pixel.",
+        "Este letreiro, aliás, também é uma textura: um plano inclinado, cortado em "
+        "faixas, que o geo3d desenha enquanto a VRAM rola...",
+    ]),
+    "en": ("A 3D coprocessor for the MSX", [
+        "A time of rebirth. FPGA cartridges give the MSX2 a new VDP, the V9968, "
+        "created by HRA!, with fast commands and 256 KB of VRAM.",
+        "But the Z80 still faces the mathematics alone. Matrices, perspective and "
+        "divisions consume every cycle, frame after frame.",
+        "In the same FPGA, geo3d is born. It rotates and projects vertices, sorts faces, "
+        "computes lighting and hands the VDP its LINE and LRMM commands, line by line.",
+        "The Z80 sends only a few bytes a frame. The VDP fetches textures from its own "
+        "VRAM and paints each pixel.",
+        "This crawl, incidentally, is also a texture: a tilted plane, cut into strips, "
+        "that geo3d draws while the VRAM scrolls...",
+    ]),
+    "es": ("Un coprocesador 3D para el MSX", [
+        "Tiempos de renacimiento. Cartuchos con FPGA dan al MSX2 un nuevo VDP, el V9968, "
+        "creado por HRA!, con comandos rápidos y 256 KB de VRAM.",
+        "Pero el Z80 sigue solo ante las matemáticas. Matrices, perspectiva y divisiones "
+        "consumen cada ciclo, cuadro tras cuadro.",
+        "En la misma FPGA nace geo3d. Gira y proyecta los vértices, ordena las caras, "
+        "calcula la luz y entrega al VDP los comandos LINE y LRMM, línea a línea.",
+        "El Z80 envía pocos bytes por cuadro. El VDP lee las texturas de su propia VRAM "
+        "y pinta cada píxel.",
+        "Este texto, por cierto, también es una textura: un plano inclinado, cortado en "
+        "franjas, que geo3d dibuja mientras la VRAM se desplaza...",
+    ]),
+}
+CRAWL_SPEED = (7, 10)  # of the full-speed crawl (1 texture row per 2 vertical blanks): 30% slower
 TXT0 = 768             # first text row in VRAM (page 3)
 COLW = 240             # text column, texels
 INK = 4
 
 
-def crawl_texture():
+def crawl_texture(lang="pt"):
     """Renders the crawl into a 1-bit column, returns rows of VRAM bytes."""
+    sub, paragraphs = CRAWL[lang]
     ft = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf", 13)
     fbig = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34)
     fmid = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf", 14)
@@ -403,11 +447,11 @@ def crawl_texture():
     for t in CRAWL_TITLE:
         lines.append(("big", t))
     lines.append(("gap", 8))
-    lines.append(("mid", CRAWL_SUB))
+    lines.append(("mid", sub))
     lines.append(("gap", 22))
     probe = ImageDraw.Draw(Image.new("1", (1, 1)))
     wsp = probe.textlength(" ", font=ft)
-    for par in CRAWL_TEXT:
+    for par in paragraphs:
         words = par.split()
         cur = []
         for wd in words:
@@ -433,6 +477,8 @@ def crawl_texture():
         if kind in ("big", "mid"):
             fnt = fbig if kind == "big" else fmid
             tw = d.textlength(c, font=fnt)
+            ink = d.textbbox((0, 0), c, font=fnt)
+            assert ink[2] - ink[0] <= COLW, f"crawl title/subtitle wider than the column: {c!r}"
             d.text(((COLW - tw) / 2, y), c, font=fnt, fill=1)
             y += 44 if kind == "big" else 22
             continue
@@ -469,10 +515,26 @@ def starfield(seed, n):
     return bytes(page)
 
 
-def scene_crawl():
-    sh = Show("crawl")
-    rows = crawl_texture()
+def crawl_paces(nframes):
+    """Vertical blanks before each page flip, so the crawl (one texture row per
+    frame) runs at CRAWL_SPEED of the 1 row per 2 blanks pace: frame k is
+    shown at blank round(k * 2 * den / num). For 0.7: 3,3,3,2,3,3,3 ... (20
+    blanks per 7 rows). Slowing down in time keeps every frame exactly one
+    frame of the full-speed crawl; moving the plane by fractions of a row
+    instead makes the text step backwards, because the engine projects whole
+    pixels."""
+    num, den = CRAWL_SPEED
+    at = [(4 * den * k + num) // (2 * num) for k in range(nframes + 1)]
+    return [at[k + 1] - at[k] for k in range(nframes)]
+
+
+def scene_crawl(lang="pt"):
+    """The crawl in one language: one texture row per frame (TEXY + 1), paced
+    by crawl_paces()."""
+    sh = Show("crawl" if lang == "pt" else f"crawl_{lang}")
+    rows = crawl_texture(lang)
     T = len(rows)
+    assert TXT0 + T <= 2048, "crawl text past the end of 256 KB VRAM"
     STARS = 512
     sh.vram(STARS * 128, starfield(1985, 150))
     sh.vram(TXT0 * 128, b"".join(rows))
@@ -515,9 +577,14 @@ def scene_crawl():
     sh.words(0x00, rot(0, 0) + [0, 0, 0])
     LEAD, TAIL = 45, 640
     ts = list(range(-LEAD, T + TAIL))
+    paces = crawl_paces(len(ts))
     for k, t in enumerate(ts):
         ypage = 256 if k % 2 == 0 else 0
         sh.begin(k)
+        if k == 0:
+            sh.music()                               # the music starts with the crawl
+        if k == 0 or paces[k] != paces[k - 1]:
+            sh.pace(paces[k])
         sh.hmmm(0, STARS, 0, ypage, 256, H)
         texy = (TXT0 + t - R - TS) & 0x1FFF
         sh.idx(0x62, [texy & 0xFF, texy >> 8])
@@ -679,7 +746,8 @@ def scene_flyin():
                      "depois o logo gira"), None
 
 
-SCENES = {"panzoom": scene_panzoom, "crawl": scene_crawl, "flyin": scene_flyin}
+SCENES = {"panzoom": scene_panzoom, "crawl": scene_crawl, "flyin": scene_flyin,
+          "crawl_en": lambda: scene_crawl("en"), "crawl_es": lambda: scene_crawl("es")}
 
 
 def main():
@@ -693,7 +761,13 @@ def main():
     sample = sorted({round(i * (n - 1) / max(1, nsample - 1)) for i in range(nsample)})
     write_rtl_files(sh, pages, sample)
     out = os.path.join(HERE, "out", f"geo3d_{name}.mp4")
-    render(pages, stats, pal, out, title, loops, 30, extra)
+    blanks, pace = [], 2
+    for kind, fr, text in sh.ops:
+        if kind == "P":
+            pace = int(text.split()[1])
+        elif kind == "D":
+            blanks.append(pace)
+    render(pages, stats, pal, out, title, loops, 30, extra, blanks if set(blanks) != {2} else None)
     tot_m = sum(s[0] for s in stats)
     tot_l = sum(s[1] for s in stats)
     print(f"{name}: {n} quadros x {loops} voltas -> {out}; {tot_m} LRMM, {tot_l} LINE; "
