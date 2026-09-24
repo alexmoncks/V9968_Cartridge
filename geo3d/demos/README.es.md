@@ -110,7 +110,7 @@ ningún archivo de música: usa un MIDI que tengas derecho a utilizar. Sin
 ## Cómo ejecutarla
 
 **openMSX.** Las demos necesitan un fork del fork de openMSX para el V9968 hecho
-por buppu3 (rama `v9968`). Ese segundo fork (rama `geo3d`, aún no publicado)
+por buppu3 (rama `v9968`). Ese segundo fork ([alexmoncks/openMSX, rama `geo3d`](https://github.com/alexmoncks/openMSX/tree/geo3d))
 añade un pequeño dispositivo geo3d y una corrección para que el V9968 responda
 con el ID 3 y active los comandos extendidos y los 256 KB de VRAM (el texto en
 perspectiva está por encima de 128 KB). Genera `GEO3D_98.ROM` (V9968 en los

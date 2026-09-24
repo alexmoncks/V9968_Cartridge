@@ -10,6 +10,27 @@ V9968 cartridge (Gowin GW2AR-LV18QN88C8/I7, Tang Nano 20K).
 
 Personal project by Alex Moncks. Not part of the official V9968 by HRA!.
 
+## Demos
+
+The demo ROM (language menu, six demos, music) running in openMSX, captured page
+flip by page flip. What each one shows, how to run it and how it is checked:
+**[demos/](demos/README.md)** in English, [Português](demos/README.pt.md) and
+[Español](demos/README.es.md).
+
+<p>
+<img src="demos/img/crawl_en.gif" width="32%" alt="Perspective text crawl, textured by LRMM">
+<img src="demos/img/panzoom.gif" width="32%" alt="Textured GEO3D while the camera zooms and pans">
+<img src="demos/img/flyin.gif" width="32%" alt="The letters fly in over a SCREEN 5 scene">
+</p>
+<p>
+<img src="demos/img/wire.gif" width="32%" alt="Rotating wireframe cube and octahedron">
+<img src="demos/img/faces.gif" width="32%" alt="GEO3D as shaded solid blocks">
+<img src="demos/img/tex.gif" width="32%" alt="GEO3D with textured caps and shaded sides">
+</p>
+<p>
+<img src="demos/img/menu.gif" width="32%" alt="Language menu: English, Español, Português">
+</p>
+
 ## What it does
 - 3x3 matrix in Q2.14 plus translation, 16-bit signed vertices (3 parallel multipliers)
 - Perspective projection: SX = CX + X*F/Z, SY = CY - Y*F/Z (16-step sequential divider)
@@ -242,45 +263,99 @@ page flips) and renders them with the Python system model:
 
 - `panzoom`: the textured logo while the camera zooms (focal length F) and pans
   (translation); 33 bytes to geo3d per frame.
-- `crawl`: a perspective text crawl. One tilted plane cut into 75 strips, textured
-  by LRMM; the Z80 only moves TEXY (2 bytes per frame) and the text scrolls. Two
-  tricks: the light level doubles as a texture bank (each strip's normal selects
-  level 1..5, so the plane reaches 1,200 texture rows through `TEXY + level *
-  TSTRIDE + v`), and the LRMM source window (R#51-58) makes everything outside
-  the text transparent (texel = CLR = 0 with TIMP).
+- `crawl` (Portuguese), `crawl_en`, `crawl_es`: a perspective text crawl. One
+  tilted plane cut into 75 strips, textured by LRMM; the Z80 only moves TEXY
+  (2 bytes per frame) and the text scrolls. Two tricks: the light level doubles
+  as a texture bank (each strip's normal selects level 1..5, so the plane reaches
+  1,200 texture rows through `TEXY + level * TSTRIDE + v`), and the LRMM source
+  window (R#51-58) makes everything outside the text transparent (texel = CLR = 0
+  with TIMP). One texture row per frame, shown after 3, 3, 3, 2, 3, 3, 3 vertical
+  blanks (20 every 7 frames, the player's PACE opcode): 0.7 times the speed of
+  one row per 30 fps frame, with every frame one of the full-speed ones. Moving
+  the plane by fractions of a row instead was tried and dropped: the engine
+  projects whole pixels, so the text stepped backwards in the middle of the
+  screen.
 - `flyin`: the letters arrive one by one over an original SCREEN 5 scene copied
   from VRAM page 3 every frame (HMMM), then the logo turns. The Z80 only rewrites
-  the moving letter's vertices.
+  the vertices of the letters in motion.
 
 Checks: the geo3d RTL (`sim/tb_engine.v`) reproduces the model's command log for
-every frame of every scene (311,741 LRMM for the crawl; 331,152 and 237,232
-commands for the other two), and sampled frames run end to end on geo3d_bus +
-HRA!'s `vdp_command.v` (`sim/tb_system.v`, `showcase/check_sample.py`) paint the
-same pages as the model.
+every frame of every scene (311,741 LRMM for the Portuguese crawl, 307,629 for
+the English one, while the Spanish crawl's geo3d traffic equals the Portuguese
+one; 331,152 and 237,232 commands for the other two), and sampled frames run end
+to end on geo3d_bus + HRA!'s `vdp_command.v` (`sim/tb_system.v`,
+`showcase/check_sample.py`) paint the same pages as the model, in the three
+languages.
 
 This caught one model gap: `vdp_command.v` applies TIMP transparency to the
 whole CLR byte (0x80 is not transparent) but writes only its low nibble, for LINE
 and for LRMM sources outside the window. `sim/hra/check_lrmm.py` now models
 this and draws CLR from the full byte range.
 
-## Demo ROM for real hardware (`rom/`)
+## Demo ROM (`rom/`)
 
 `rom/build_rom.py` builds `rom/out/GEO3D.ROM`, a 512 KB MegaROM with the ASCII16
 mapper, for a flash cartridge in a second slot next to the V9968 cartridge
-(DIP switch at 88h). It plays, in a loop: the crawl, the wireframe, the solid
-blocks, the textured spin, pan and zoom, and the fly-in. The space bar skips to
-the next demo. The picture is on the V9968 HDMI output, at 30 frames per second.
+(DIP switch at 88h); `--base 0x98` builds `GEO3D_98.ROM` for openMSX (below).
+It starts with a language menu (English, Español, Português; keys 1/2/3, or
+cursor up/down and SPACE or RETURN), then plays, in a loop: the crawl in that
+language (the only text in the demos), the wireframe, the solid blocks, the
+textured spin, pan and zoom, and the fly-in. The space bar skips to the next
+demo. The picture is on the V9968 HDMI output, at 30 frames per second (the
+crawl at 0.7 of that). See [demos/](demos/README.md).
 
-- `rom/geo3d_rom.asm`: the player (769 bytes, bank 0). Each demo is a command
-  stream in banks 1-18: geo3d writes, VDP register writes, RLE-compressed VRAM
-  uploads, wait-for-idle and page flips. The streams are exactly the traffic
-  checked above (the .COM demos are captured from their Z80 runs). Pacing uses
-  S#0 bit7, which `vdp_cpu_interface.v` sets every frame and clears on read.
+- `rom/geo3d_rom.asm`: the player (about 2.1 KB, bank 0). Each demo is a
+  command stream in banks 1-30: geo3d writes, VDP register writes,
+  RLE-compressed VRAM uploads, wait-for-idle and page flips. The streams are
+  exactly the traffic checked above (the .COM demos are captured from their Z80
+  runs). Pacing uses S#0 bit7, which `vdp_cpu_interface.v` sets every frame and
+  clears on read. The menu is a stream too; its highlight is a palette change.
+- Music (`build_rom.py --music FILE.mid`, `rom/music.py`): a MIDI file is reduced
+  at build time for three targets, and at power on the player uses the best chip
+  it finds: the FM part of an OPL4 (MoonSound) or an OPL3 at C4h (18 channels,
+  F-numbers corrected for the OPL4's 49,517 Hz) plus the PSG; a Konami SCC in
+  any slot (5 channels) plus the PSG; or the PSG alone. It starts with the crawl,
+  advances one tick per vertical blank right after the page flip, fades out and
+  stops at the next demo. No music file is part of this repository; without
+  `--music` the ROM is silent.
 - `rom/run_rom_z80.py`: runs the ROM in a Z80 emulator as an MSX would
-  (ENASLT/RSLREG, ASCII16 bank switching into page 2, V9968 and geo3d status),
-  decodes every OUT and compares each demo with its verified traffic: all six
-  are identical, the sequence restarts, and the space bar moves on at the
-  right frame.
+  (ENASLT/RSLREG, ASCII16 bank switching into page 2, V9968 and geo3d status,
+  keyboard matrix), decodes every OUT and checks: the menu picture and
+  highlight for scripted keys, each demo against its verified traffic, the
+  vertical blanks before each flip, the restart in the chosen language, the
+  space bar, and the music register writes tick by tick on the PSG, SCC or OPL
+  (`--chip psg|scc|opl`, `--opl4`), with silence in the following demos. Both
+  port profiles, three languages and three key modes pass, and 15 deliberately
+  broken players (mutants) are all caught.
+
+## openMSX
+
+The ROM runs in openMSX with the V9968 fork by buppu3 plus a geo3d device:
+[alexmoncks/openMSX, branch `geo3d`](https://github.com/alexmoncks/openMSX/tree/geo3d)
+(see its `README.geo3d.md`).
+
+- `src/video/Geo3DCore`: a C++ port of the Python reference model. Its command
+  log is byte for byte the model's (and so the RTL's) on every test set: random
+  wireframe, solid and textured scenes, the three .COM demos and the showcase
+  scenes.
+- `Geo3D` device, `-ext geo3d`: geo3d on ports 9Dh/9Fh next to the V9968 on
+  98h-9Ch; RUN hands the frame's LINE/LRMM commands to the VDP whenever its
+  command engine is idle, and RUN busy clears after the last one, as in the RTL.
+- A fix in the fork's V9968 (new register layout): R#21 bit 0 = 0 also gives
+  ID 3, the extended command registers and 256 KB of VRAM, as in the FPGA.
+
+```
+openmsx -machine C-BIOS_V9968_JP -ext geo3d -cart GEO3D_98.ROM -romtype ASCII16
+```
+
+(`C-BIOS_V9968_JP` comes from renatus-xxxx's
+[openmsx-v9968-windows-setup](https://github.com/renatus-xxxx/openmsx-v9968-windows-setup);
+add `-ext scc`, `-ext moonsound` or `-ext OPL3Cartridge_Moonsound_compatible`
+for the music.) Every demo plays; the GIFs in [demos/](demos/README.md) were
+captured this way. Limits: geo3d is not cycle exact there (the geometry takes no
+emulated time and commands go out as soon as the VDP is idle), the fork's VDP
+timing is approximate, and only this 98h profile is emulated, not the
+cartridge at 88h.
 
 Not yet checked on hardware: the geo3d bitstream built with Gowin EDA (the
 cartridge's DVI IP is encrypted, so the open toolchain cannot produce the full
@@ -290,7 +365,7 @@ bitstream), VRAM write speed with OTIR, and the flash cartridge mapper setting
 ### Known limits (next steps)
 - Edges crossing the near plane are skipped (needs 3D clipping before projection).
 - W <= 512, H <= 1024.
-- Not yet run on hardware or on openMSX.
+- Not yet run on hardware (it runs in openMSX, see above).
 - The Tang Nano 20K is getting full (see resources above).
 - Texture mapping is affine (no perspective correction); a texture row is at most
   4,096 texels wide (LRMM SX is 12 bits).
@@ -321,7 +396,8 @@ Regenerate the table with a different motion in `z80/gen_tables.py`.
 - sim/render_vram.py  renders the painted VRAM pages into MP4 / GIF
 - syn/cartridge/      whole-cartridge synthesis script and Yosys reports
 - showcase/           showcase scenes, system model, videos, RTL cross-checks
-- rom/                MegaROM player, stream builder, Z80-emulator check
+- rom/                MegaROM player, stream builder, MIDI converter (music.py), Z80-emulator check
+- demos/              demo page in English, Portuguese and Spanish, GIFs captured in openMSX
 - integration/        patch that wires geo3d into the cartridge project
 - run_all.sh          reproduces everything (iverilog, python3, z80asm, pip: yowasp-yosys, yowasp-nextpnr-himbaechel-gowin, z80)
 

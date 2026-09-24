@@ -109,8 +109,7 @@ faz parte deste repositório: use um MIDI que você tenha o direito de usar. Sem
 ## Como rodar
 
 **openMSX.** Os demos precisam de um fork do fork do openMSX para o V9968 feito
-pelo buppu3 (branch `v9968`). Esse segundo fork (branch `geo3d`, ainda não
-publicado) acrescenta um pequeno dispositivo geo3d e uma correção para o V9968
+pelo buppu3 (branch `v9968`). Esse segundo fork ([alexmoncks/openMSX, branch `geo3d`](https://github.com/alexmoncks/openMSX/tree/geo3d)) acrescenta um pequeno dispositivo geo3d e uma correção para o V9968
 responder com o ID 3 e habilitar os comandos estendidos e os 256 KB de VRAM (o
 texto do letreiro fica acima de 128 KB). Gere a `GEO3D_98.ROM` (V9968 nas portas
 98h, geo3d em 9Dh/9Fh) e rode na máquina `C-BIOS_V9968_JP` do pacote

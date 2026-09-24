@@ -105,7 +105,7 @@ this repository: supply a MIDI file you have the rights to use. Without
 ## Running the ROM
 
 **openMSX.** The demos need a fork of buppu3's V9968 fork of openMSX (branch
-`v9968`). That second fork (branch `geo3d`, not yet published) adds a small geo3d
+`v9968`). That second fork ([alexmoncks/openMSX, branch `geo3d`](https://github.com/alexmoncks/openMSX/tree/geo3d)) adds a small geo3d
 device and a fix so that the V9968 reports ID 3 and enables its extended
 commands and 256 KB of VRAM (the crawl text lies above 128 KB). Build
 `GEO3D_98.ROM` (V9968 at ports 98h, geo3d at 9Dh/9Fh) and run it on the
