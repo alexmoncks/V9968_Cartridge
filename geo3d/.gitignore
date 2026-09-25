@@ -30,3 +30,4 @@ rom/out/
 rom/rom_tables.asm
 z80/GEO3D.COM
 z80/GEO3DF.COM
+basic/out/
