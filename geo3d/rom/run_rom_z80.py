@@ -28,22 +28,55 @@ music (there is no OPL or SCC here) is checked tick by tick against the
 converter: tick k's PSG writes at the (k+1)-th vertical blank of the crawl,
 then only the player's mute after the last tick.
 
+--moonsound KB emulates a MoonSound (OPL4, opl4emu.py) with KB of sample
+RAM, and real time: S#0 shows a vertical blank every 59736 T (an NTSC
+frame) of the Z80's T-states (the pip z80 counts no MSX M1 wait states, so
+the Z80 is a little fast here), geo3d and the command engine still answer
+at once. The chip is not forced: the ROM's own detection runs against the
+emulated FM part (the OPL3 timers and status, NEW2 at FM register 105h),
+the wave registers (device ID, memory address, memory data, tone loads with
+LD for 295 us, as openMSX) and its sample RAM; the MOD player's part of it
+runs during the menu, and what it found is read when the menu ends. With a ROM built with a MOD
+and enough sample RAM, the MOD player must play the MOD: the sample RAM it
+fills (tone headers and samples) exactly modplay.py's model of it, finished
+before the song starts; then, from mod_start on, each tick's wave register
+writes (between two clears of timer 2's flag) exactly the model's, the
+timer 2 periods exactly its dithered ones, every tick played before the
+next one is due (none lost), no tone number written while a header loads,
+every tone loaded a RAM tone whose header points into the samples, and
+nothing after the stop. It reports the tick and key-on latencies behind
+the timer and the longest gap between two status reads (polls) while the
+song plays. With too little sample RAM it must play the FM fallback
+(checked as --chip opl --opl4).
+
 Usage: run_rom_z80.py [--base 0x88|0x98] [--lang en|es|pt] [--keys digit|down|up]
-                      [space_at_flip]
+                      [--chip psg|scc|opl] [--opl4] [--moonsound KB] [--timed]
+                      [--late N] [--out DIR] [--trace FILE] [space_at_flip]
   --base: port profile, 0x88 (default, GEO3D.ROM) or 0x98 (GEO3D_98.ROM, the
   emulator profile); build it first with build_rom.py --base.
+  --timed: real time as with --moonsound, without one (for timing reports).
+  --late: the menu keys N frames later (with a MoonSound: the samples are
+  all up before the choice).
+  --out: the build's out directory (default rom/out).
+  --trace: every IN and OUT of the run, in order, 3 bytes each ('I' or 'O',
+  port, value): two ROMs with the same traces send the same port traffic
+  (the harness answers S#0 per read, so the trace does not depend on speed).
   space_at_flip: also test the space bar, pressed at that page flip of the
   first demo (the player must move to the second demo).
 """
 import argparse
+import hashlib
 import json
 import os
 import sys
+from array import array
 
 import z80
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "out")
+sys.path.insert(0, HERE)
+
+import opl4emu  # noqa: E402
 BANK = 16384
 
 ap = argparse.ArgumentParser()
@@ -54,12 +87,24 @@ ap.add_argument("--chip", default="psg", choices=("psg", "scc", "opl"),
                 help="music target: after power-on detection (which finds nothing here) the "
                      "harness sets the player's target and emulates that chip")
 ap.add_argument("--opl4", action="store_true", help="with --chip opl: an OPL4 (F-number correction)")
+ap.add_argument("--moonsound", type=int, metavar="KB",
+                help="a MoonSound with KB of sample RAM (detection not forced; real time)")
+ap.add_argument("--timed", action="store_true", help="real time: a vertical blank every 59736 T")
+ap.add_argument("--late", type=int, default=0, help="the menu keys this many frames later")
+ap.add_argument("--out", default=os.path.join(HERE, "out"), help="the build's out directory")
+ap.add_argument("--trace", help="write every IN and OUT to this file ('I'/'O', port, value)")
 ap.add_argument("space_at", nargs="?", type=int)
 opt = ap.parse_args()
+OUT = opt.out
 BASE, SPACE_AT = opt.base, opt.space_at
+MS = opt.moonsound is not None
+TIMED = opt.timed or MS
 SUFFIX = "" if BASE == 0x88 else f"_{BASE:02x}"
 P_DATA, P_CTRL, P_PAL, P_IND, P_PORT4 = (BASE + i for i in range(5))
 P_GIDX, P_GDAT = BASE + 5, BASE + 7
+T_HZ = 3579545                              # the Z80's clock
+FRAME_T = 1368 * 262 / 6                    # T-states per NTSC frame (59.92 Hz)
+RUN = 200000                                # T-states per emulator run
 
 rom = open(os.path.join(OUT, "GEO3D.ROM" if BASE == 0x88 else f"GEO3D_{BASE:02X}.ROM"), "rb").read()
 labels = {}
@@ -77,16 +122,17 @@ KEYS = {"1": (0, 1), "2": (0, 2), "3": (0, 3), "ret": (7, 7),
 # menu script: (key, first frame down, first frame up)
 script = [("space", 0, 3)]                  # held when the menu appears: ignored
 sels = [0]                                  # expected highlight after each repaint
+L = opt.late
 if opt.keys == "digit":
-    script.append((str(LANG_IDX + 1), 5, 11))
+    script.append((str(LANG_IDX + 1), L + 5, L + 11))
     sels.append(LANG_IDX)
 else:
     step, n = ("down", LANG_IDX) if opt.keys == "down" else ("up", (3 - LANG_IDX) % 3)
     for i in range(n):
-        script.append((step, 5 + 8 * i, 8 + 8 * i))
+        script.append((step, L + 5 + 8 * i, L + 8 + 8 * i))
         sels.append((sels[-1] + (1 if step == "down" else 2)) % 3)
-    script.append(("ret" if opt.lang == "es" else "space", 5 + 8 * n, 11 + 8 * n))
-MENU_LIMIT = 400                            # frames: a stuck menu is a failure
+    script.append(("ret" if opt.lang == "es" else "space", L + 5 + 8 * n, L + 11 + 8 * n))
+MENU_LIMIT = 400 + L                        # frames: a stuck menu is a failure
 MENU_STEPS = 20000                          # emulator runs: a menu that stops reading S#0
 
 m = z80.Z80Machine()
@@ -101,11 +147,24 @@ assert rom[0:2] == b"AB" and rom[2] | rom[3] << 8 == 0x4010
 st = {"r15": 0, "pend": None, "s0": 0, "geo": 0, "flips": 0, "inits": 0,
       "page2": None, "idx": None, "row": 0, "tick": 0, "blanks": 0, "fdemo": 0, "psg_reg": 0,
       "forced": False, "opl_reg": [0, 0], "in_scc": False, "scc_mem": bytearray(256),
-      "scc_9000": 0xFF, "page2_save": None}
+      "scc_9000": 0xFF, "page2_save": None, "t0": 0, "vb": 0, "vb_flip": 0}
 SCC_SLOT = 0x02                             # where the emulated SCC sits (primary slot 2)
 TARGET = {"psg": 0, "scc": 1, "opl": 2}[opt.chip]
 events = []           # ("G", sel, b) / ("RUN",) / ("P", port, b, blanks) / ("INIT",) /
                       # ("S", psg register, value, vertical blanks since the demo began)
+trace = []            # --trace: b"O" / b"I", port, value
+flip_t = []           # --timed: (demo, flip, T-state, real vertical blanks since the last flip,
+                      # blanks the player counted)
+
+
+def now():
+    """The Z80's T-states since power on (inside an instruction: at its I/O)."""
+    return st["t0"] + RUN - m.ticks_to_stop
+
+
+# ------------------------------------------------------------ MoonSound
+T2_UNIT = opl4emu.T2_UNIT
+ms = opl4emu.MoonSound(opt.moonsound) if MS else None
 
 
 def keys_down():
@@ -119,6 +178,8 @@ def keys_down():
 
 def on_out(port, v):
     p = port & 0xFF
+    if opt.trace:
+        trace.append(bytes((0x4F, p, v)))
     if p == P_GIDX:
         events.append(("G", 0, v))
         st["idx"] = v
@@ -140,6 +201,11 @@ def on_out(port, v):
                     if r == 15:
                         st["r15"] = st["pend"] & 0x0F
                     if r == 2:
+                        if TIMED:                 # real vertical blanks since the last R#2
+                            vb = int(now() // FRAME_T)
+                            flip_t.append((st["inits"], st["flips"], now(), vb - st["vb_flip"],
+                                           st["blanks"]))
+                            st["vb_flip"] = vb
                         st["flips"] += 1
                         st["blanks"] = 0          # blanks are counted from flip to flip
                         events.append(("FLIP", st["fdemo"]))
@@ -150,22 +216,38 @@ def on_out(port, v):
         events.append(("S", st["psg_reg"], v, st["fdemo"]))
     elif p in (0xC4, 0xC6):                   # OPL address, bank 0 / 1
         st["opl_reg"][(p >> 1) & 1] = v
+        if MS:
+            ms.fm_latch[(p >> 1) & 1] = v
     elif p in (0xC5, 0xC7):                   # OPL data
         bank = (p >> 1) & 1
         events.append(("O", bank, st["opl_reg"][bank], v, st["fdemo"]))
+        if MS:
+            ms.fm_write(bank, v, now())
+    elif p in (0x7E, 0x7F) and MS:            # OPL4 wave part
+        ms.wave_out(p, v, now())
     elif p == P_PORT4:
         events.append(("INIT",))
+        if TIMED:
+            st.setdefault("init_t", []).append((now(), st.get("s0_t", 0)))
         st["inits"] += 1
         st["flips"] = 0
         st["fdemo"] = 0
         if st["inits"] == 2:
             st["chosen"] = st["tick"]
+            if MS:                              # the menu is over: what the ROM found
+                st["found"] = (m.memory[labels["mus_target"]], m.memory[labels["opl4"]])
     elif p == 0xAA:                           # PPI port C: keyboard row
         st["row"] = v & 0x0F
 
 
 def on_in(port):
-    p = port & 0xFF
+    v = read_port(port & 0xFF)
+    if opt.trace:
+        trace.append(bytes((0x49, port & 0xFF, v)))
+    return v
+
+
+def read_port(p):
     if p == P_GIDX:
         if st["geo"]:
             st["geo"] -= 1
@@ -173,7 +255,13 @@ def on_in(port):
         return 0x00
     if p == P_CTRL:
         if st["r15"] == 0:                    # S#0: F set on every other read
-            st["s0"] ^= 1
+            if TIMED:                         # or: F set by every vertical blank since the last read
+                st["s0_t"] = now()
+                vb = int(st["s0_t"] // FRAME_T)
+                st["s0"] = vb > st["vb"]
+                st["vb"] = vb
+            else:
+                st["s0"] ^= 1
             if st["s0"]:
                 st["blanks"] += 1
                 st["fdemo"] += 1              # the player runs one music tick per blank it sees
@@ -192,6 +280,13 @@ def on_in(port):
         return v & 0xFF
     if p == 0xAA:
         return 0x00
+    if MS:
+        if p in (0xC4, 0xC6):
+            return ms.read_status(now())
+        if p in (0xC5, 0xC7):
+            return ms.fm[(p >> 1) & 1][ms.fm_latch[(p >> 1) & 1]]
+        if p in (0x7E, 0x7F):
+            return ms.wave_in(p)
     if p == 0xC4 and st["forced"] and opt.chip == "opl":
         return 0x00                           # OPL status: not BUSY
     return 0xFF
@@ -199,8 +294,16 @@ def on_in(port):
 
 m.set_output_callback(on_out)
 m.set_input_callback(on_in)
-for addr in (0x0024, 0x0138, labels["bank2_raw"], labels["psg_silence"]):
+US_MEM = labels.get("us_mem")                # the MOD upload's memory writes (after its RAM test)
+for addr in (0x0024, 0x0138, labels["bank2_raw"], labels["psg_silence"]) + ((US_MEM,) if MS and US_MEM else ()):
     m.set_breakpoint(addr)
+
+
+def step_over():
+    """One instruction past a breakpoint, its T-states counted."""
+    m.ticks_to_stop = RUN
+    m.step_over_breakpoint()
+    st["t0"] += RUN - m.ticks_to_stop
 
 
 def enaslt_page2(slot):
@@ -230,8 +333,9 @@ target_inits = 1 + (2 if SPACE_AT is not None else ndemos + 1)
 stuck = False
 menu_steps = 0
 while True:
-    m.ticks_to_stop = 200000
+    m.ticks_to_stop = RUN
     m.run()
+    st["t0"] += RUN - m.ticks_to_stop
     if st["inits"] == 1:
         menu_steps += 1
     if m.halted:
@@ -239,26 +343,34 @@ while True:
     if m.pc == 0x0024:                        # ENASLT (always page 2)
         assert m.h & 0xC0 == 0x80
         enaslt_page2(m.a)
-        m.step_over_breakpoint()
+        step_over()
+    elif MS and m.pc == US_MEM:
+        ms.counting = True
+        step_over()
     elif m.pc == labels["psg_silence"]:
-        if not st["forced"]:                  # right after power-on detection
+        if not st["forced"] and MS:           # right after power-on detection (the chip is not forced)
+            st["forced"] = True
+        elif not st["forced"]:
             assert m.memory[labels["mus_target"]] == 0, "detection found a chip in the harness"
             if TARGET:
                 m.set_memory_block(labels["mus_target"], bytes([TARGET]))
                 m.set_memory_block(labels["scc_slot"], bytes([SCC_SLOT if TARGET == 1 else 0xFF]))
                 m.set_memory_block(labels["opl4"], bytes([1 if opt.opl4 else 0]))
             st["forced"] = True
-        m.step_over_breakpoint()
+        step_over()
     elif m.pc == 0x0138:                      # RSLREG: slot 1 in pages 1 and 2
         m.a = 0b00010100
-        m.step_over_breakpoint()
+        step_over()
     elif m.pc == labels["bank2_raw"]:          # ASCII16 bank switch for page 2 (streams and music)
         b = m.a
         m.set_memory_block(0x8000, rom[b * BANK:(b + 1) * BANK])
         st["page2"] = b
-        m.step_over_breakpoint()
+        step_over()
     if st["inits"] >= target_inits:
-        break
+        # with a MoonSound, a few frames more: the demo_init that stops the MOD
+        st.setdefault("t_last", now())
+        if not MS or now() > st["t_last"] + 3 * FRAME_T:
+            break
     if st["inits"] == 1 and (st["tick"] > MENU_LIMIT or menu_steps > MENU_STEPS):
         stuck = True
         break
@@ -387,6 +499,23 @@ played = demos[1:]
 MUTE_PSG = [(7, 0xBF), (8, 0), (9, 0), (10, 0)]
 CAR = [0x03, 0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x13, 0x14, 0x15]
 MUTE_OPL = [(c // 9, 0xB0 + c % 9, 0) for c in range(18)]
+CHIP, OPL4 = opt.chip, opt.opl4             # the target the music is checked for
+mod_play = False
+if MS and not stuck:
+    # the ROM's own detection: the MOD when it has one and the sample RAM for
+    # its image, else the OPL4's FM part with the conversion
+    modx = exp.get("mod")
+    want_mod = bool(modx) and opt.moonsound * 1024 >= modx["blocks"] * 128 * 1024
+    found = st.get("found")
+    good = found == ((3, 1) if want_mod else (2, 1))
+    need = f" (o MOD pede {modx['blocks'] * 128} KB)" if modx else " (ROM sem MOD)"
+    print(f"detecção: MoonSound com {opt.moonsound} KB de sample RAM -> "
+          f"{'MOD na parte wave' if found and found[0] == 3 else 'FM do OPL4 (conversão)'}{need}: "
+          + ("ok" if good else f"FALHOU, alvo {found}"))
+    ok = ok and good
+    if found and found[0] == 2:
+        CHIP, OPL4 = "opl", True
+    mod_play = bool(found) and found[0] == 3
 
 
 def opl4_tune(lo, b):
@@ -413,7 +542,7 @@ def expected_music(ticks):
                 opl.append((op - 0x30, o[1], o[2]))
             elif 0x40 <= op <= 0x51:
                 c = op - 0x40
-                lo, b = opl4_tune(o[1], o[2]) if opt.opl4 else (o[1], o[2])
+                lo, b = opl4_tune(o[1], o[2]) if OPL4 else (o[1], o[2])
                 opl += [(c // 9, 0xA0 + c % 9, lo), (c // 9, 0x40 + CAR[c % 9], o[3]), (c // 9, 0xB0 + c % 9, b)]
                 b0[c] = b
             elif 0x60 <= op <= 0x71:
@@ -443,15 +572,15 @@ def sound_at(demo_i):
 
 
 mus = exp.get("music")
-if mus and len(played) >= 1 and not stuck:
-    want, scc_state = expected_music(mus[opt.chip])
+if mus and len(played) >= 1 and not stuck and not mod_play:
+    want, scc_state = expected_music(mus[CHIP])
     got = sound_at(1)
     blanks_in = sum(int(g.split("/")[1]) for g in played[0] if g.startswith("D") and "/" in g)
     nt = len(want)
     heard = min(nt, blanks_in)
     bad = [k for k in range(heard)
            if tuple(got.get(k + 1, ([], [], [], []))[:3]) != (want[k][0], list(want[k][1]), want[k][2])]
-    mute = (MUTE_PSG, [(0x8F, 0)] if scc_state[0x8F] else [], MUTE_OPL if opt.chip == "opl" else [])
+    mute = (MUTE_PSG, [(0x8F, 0)] if scc_state[0x8F] else [], MUTE_OPL if CHIP == "opl" else [])
     tail = {f: v[:3] for f, v in got.items() if f > nt}
     tail_ok = not tail or (list(tail) == [nt + 1] and tuple(tail[nt + 1]) == mute)
     scc_on = all(x == 0x3F for f, v in got.items() if 1 <= f <= heard for x in v[3])
@@ -462,14 +591,14 @@ if mus and len(played) >= 1 and not stuck:
     for i in range(2, len(demos) - 1):
         s = sound_at(i)
         z = s.get(0, ([], [], [], []))
-        if set(s) != {0} or z[0] != MUTE_PSG or z[2] != (MUTE_OPL if opt.chip == "opl" else []) \
+        if set(s) != {0} or z[0] != MUTE_PSG or z[2] != (MUTE_OPL if CHIP == "opl" else []) \
                 or any(c != (0x8F, 0) for c in z[1]):
             later_ok = False
     good = not bad and tail_ok and full and later_ok and scc_on and not late_flips
     if late_flips:
         print(f"   {len(late_flips)} trocas de página depois do tick de música do mesmo retraço, "
               f"a primeira: demo {late_flips[0][0]}, retraço {late_flips[0][1]}")
-    print(f"música  : {opt.chip}{' (OPL4)' if opt.opl4 else ''}: {heard} de {nt} ticks conferidos no {TABLE[0]}"
+    print(f"música  : {CHIP}{' (OPL4)' if OPL4 else ''}: {heard} de {nt} ticks conferidos no {TABLE[0]}"
           f"{' (interrompido pela barra de espaço)' if SPACE_AT is not None else ''}: "
           f"{'idêntica' if not bad and tail_ok and full and scc_on else 'DIFERENTE'}; "
           f"silêncio nos demos seguintes: {'ok' if later_ok else 'FALHOU'}")
@@ -483,6 +612,109 @@ if mus and len(played) >= 1 and not stuck:
     if not scc_on:
         print("   o SCC não estava ligado (9000h = 3Fh) em todos os ticks")
     ok = ok and good
+
+
+def t_ms(t):
+    return t / T_HZ * 1e3
+
+
+def mod_check():
+    """The MOD on the emulated MoonSound (see the module doc). -> ok"""
+    mx = exp["mod"]
+    fmw, good = ms.fmw, True
+    # the upload: the image in the sample RAM, done before mod_start
+    img_ok = (ms.mem_n == mx["image_len"]
+              and hashlib.sha1(ms.ram[:mx["image_len"]]).hexdigest() == mx["image_sha1"])
+    seg = opl4emu.segments(ms)
+    if seg is None:
+        print("MOD     : não começou (timer 2 nunca ligado)")
+        return False
+    t_start, t_entry, t_stop = seg["t_start"], seg["t_entry"], seg["t_stop"]
+    up0, up1 = ms.mem_t
+    inits = st["init_t"]                    # (T of each demo_init's INIT, of the last S#0 read before it)
+    menu_t, crawl_t, last_s0 = inits[0][0], inits[1][0], inits[1][1]
+    print(f"MOD     : upload de {ms.mem_n} bytes em {(up1 - up0) / T_HZ:.3f} s, de {(up0 - menu_t) / T_HZ:.2f} s "
+          f"a {(up1 - menu_t) / T_HZ:.2f} s depois do menu aparecer; a escolha saiu do menu a "
+          f"{(last_s0 - menu_t) / T_HZ:.2f} s, o crawl começou a {(crawl_t - menu_t) / T_HZ:.2f} s "
+          f"(esperou o upload {max(0, up1 - last_s0) / T_HZ:.2f} s); sample RAM "
+          f"{'idêntica' if img_ok else 'DIFERENTE'} ao modelo, completa antes do mod_start: {up1 < t_entry}")
+    good = good and img_ok and up1 < t_entry
+    clears, periods, init, segs, tail = seg["clears"], seg["periods"], seg["init"], seg["segs"], seg["tail"]
+    marks = [t_start] + clears
+    W = [[tuple(x) for x in w] for w in mx["writes"]]
+    n = len(W) - 1                          # the ticks, then the END's key offs
+    stopped = t_stop < float("inf")
+    bad, last_ok = opl4emu.match_ticks(segs, W, mx["heads"], stopped)
+    last = len(segs) - 1
+    init_ok = init == [tuple(x) for x in mx["writes_start"]]
+    per_ok = periods == mx["counts"][:len(periods)] and len(periods) >= min(len(marks), n)
+    fm_other = sorted({(b, r) for t, b, r, v in fmw if t >= t_entry} - {(0, 3), (0, 4), (1, 5)})
+    after = [x for x in fmw if x[0] > t_stop and (x[1], x[2], x[3]) != (0, 4, 0x80)]
+    how = "e o END" if stopped and last == n else "parado no demo_init" if stopped else "corte do teste"
+    print(f"MOD     : {min(len(marks), n)} de {n} ticks tocados ({how}): "
+          f"escritas do mod_start {'idênticas' if init_ok else 'DIFERENTES'} ({len(init)}), "
+          f"ticks {'idênticos' if not bad and last_ok else 'DIFERENTES'} ao modplay.py, "
+          f"períodos do timer 2 {'idênticos' if per_ok else 'DIFERENTES'} ({len(periods)}), "
+          f"outras escritas FM: {fm_other or 'nenhuma'}, depois da parada: {len(after) + len(tail)}, "
+          f"número de tom durante um carregamento: {len(ms.load_clash)}, tons fora dos samples: "
+          f"{len(ms.bad_loads)}")
+    if bad or not last_ok:
+        i = bad[0] if bad else last
+        print(f"   primeiro tick diferente: {i}: ROM {segs[i][:8]}\n"
+              f"                            esperado {(W[i] if i < len(W) else [])[:8]}")
+    if not init_ok:
+        print(f"   mod_start: ROM {init[:8]} ...\n              esperado {mx['writes_start'][:8]} ...")
+    good = (good and not bad and last_ok and init_ok and per_ok and not fm_other and not after and not tail
+            and not ms.load_clash and not ms.bad_loads)
+    # timing: timer 2's overflows (tick k + 1 due) against the flag clears
+    # (the poll that plays it); a tick is lost if the next overflow comes first
+    ov = [t for t in ms.ov2 if t_start < t < t_stop]
+    lat = [c - o for o, c in zip(ov, clears)]
+    lost = [i for i in range(min(len(ov) - 1, len(clears))) if clears[i] >= ov[i + 1]]
+    cnt_ok = len(ov) in (len(clears), len(clears) + 1)
+    ideal = mx["ideal"]
+    drift = [abs((o - t_start) / T_HZ - ideal[i + 1]) * 1e3 for i, o in enumerate(ov[:len(ideal) - 1])]
+    kon, kk = [], 0
+    for t, r, v in ms.wave:
+        if t < t_start or t > t_stop:
+            continue
+        while kk + 1 < len(marks) and t >= marks[kk + 1]:
+            kk += 1
+        if 0x68 <= r < 0x80 and v & 0x80:
+            kon.append(t - (t_start if kk == 0 else ov[kk - 1] if kk - 1 < len(ov) else marks[kk]))
+    reads = [t for t in ms.reads if t_start <= t <= min(t_stop, now())]
+    gaps = sorted(((b - a, a) for a, b in zip(reads, reads[1:])), reverse=True)
+    srt = sorted(lat)
+    print(f"MOD     : atraso dos ticks atrás do timer: máx {t_ms(srt[-1]):.2f} ms, p99 "
+          f"{t_ms(srt[int(len(srt) * 0.99)]):.2f} ms, média {t_ms(sum(lat) / len(lat)):.2f} ms; "
+          f"ticks perdidos: {len(lost)}; key on atrás do timer: {len(kon)}, máx {t_ms(max(kon)):.2f} ms, "
+          f"média {t_ms(sum(kon) / len(kon)):.2f} ms; timer contra o ProTracker: até {max(drift):.3f} ms")
+    print(f"MOD     : maior intervalo entre polls (leituras de status) tocando: "
+          + ", ".join(f"{t_ms(g):.2f} ms a {(a - t_start) / T_HZ:.2f} s" for g, a in gaps[:3]))
+    good = good and not lost and cnt_ok
+    # the PSG: the mute of each demo_init only; later demos: nothing else
+    psg = [f for f, kind, data in demo_snd[1] if kind == "psg" and f > 0]
+    later = [(i, f, kind) for i in range(2, len(demos) - 1) for f, kind, data in demo_snd[i]
+             if not (f == 0 and (kind == "psg" or (i == 2 and kind == "opl" and data[:2] == (0, 4))))]
+    print(f"MOD     : PSG no crawl além do mudo: {len(psg)} escritas; demos seguintes: "
+          f"{'silêncio' if not later else f'{len(later)} escritas'}")
+    return good and not psg and not later
+
+
+if mod_play and len(played) >= 1:
+    ok = mod_check() and ok
+if TIMED and not stuck:
+    # real time: per demo, the black screen before its first flip, and the
+    # frames that took more vertical blanks than the player counted (late)
+    names = ["menu"] + TABLE + [TABLE[0]]
+    for d in sorted({f[0] for f in flip_t}):
+        fl = [f for f in flip_t if f[0] == d]
+        if len(fl) < 2:
+            continue
+        late = [(f[1], f[3], f[4]) for f in fl[2:] if f[3] != f[4]]
+        print(f"tempo   : {names[d - 1] if d - 1 < len(names) else d:8s} tela preta até a 1a troca "
+              f"{(fl[1][2] - fl[0][2]) / T_HZ:.3f} s; {len(fl) - 1} trocas, "
+              f"{len(late)} com mais retraços que o contado" + (f": {late[:4]}" if late else ""))
 check = TABLE[:len(played) - 1] if SPACE_AT is None else TABLE[:1]
 for i, name in enumerate(check):
     got = played[i]
@@ -525,5 +757,7 @@ if SPACE_AT is None and not stuck:
     print(f"sequência ({opt.lang}): {len(played) - 1} demos e o recomeço do primeiro "
           f"({'ok' if len(played) == ndemos + 1 else 'FALHOU'})")
     ok = ok and len(played) == ndemos + 1
+if opt.trace:
+    open(opt.trace, "wb").write(b"".join(trace))
 print(f"portas {BASE:02X}h, {opt.lang}, teclas {opt.keys}: " + ("PASS" if ok else "FAIL"))
 sys.exit(0 if ok else 1)

@@ -28,6 +28,7 @@ sim/*_sys*.txt
 showcase/out/
 rom/out/
 rom/rom_tables.asm
+rom/rom_mod.asm
 z80/GEO3D.COM
 z80/GEO3DF.COM
 basic/out/

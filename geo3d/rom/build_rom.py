@@ -21,17 +21,37 @@ decoded traffic becomes the stream; the showcase scenes come straight from
 showcase/showcase.py. Writes rom/out/GEO3D.ROM and rom/out/streams.json (the
 expected traffic per demo, used by run_rom_z80.py).
 
-Usage: build_rom.py [--base 0x88|0x98] [--music FILE.mid]
+The streams are compressed (g3lz.py): each one is cut into blocks of at most
+8 KB of whole ops (the player's decode buffer), NEXTBLOCK closing each block
+but the last, and each block is compressed on its own. A loop body starts a
+new block (MARK closes the block before it), so the player restarts the loop
+by decoding that block again. What a demo does up to its first page flip
+(RAW_SETUP: the uploads behind the black screen and the first frame; the
+menu's picture) and the setup frames of the loop demos (RAW_SETUP_FRAMES)
+stay raw: the player reads them straight from ROM, as fast as before the
+compression. The music data follows, uncompressed. The parse of each block
+is cached in rom/out/g3lz/.
+
+A MOD goes in as a MOD (modplay.py): the part of the file the crawl plays
+(its header, the patterns and the samples those positions use, the file's
+own bytes) and the lookup tables of the MOD player in geo3d_modplay.asm,
+after the converted music (rom_mod.asm has where). A MoonSound with the
+sample RAM for its samples plays the MOD; the conversion is the fallback.
+
+Usage: build_rom.py [--base 0x88|0x98] [--music FILE.mid|FILE.mod]
   --base 0x88  (default) real hardware, V9968 cartridge at 88h: GEO3D.ROM
   --base 0x98  emulator profile, V9968 as the machine's VDP and geo3d on
                9Dh/9Fh (openMSX fork, -ext geo3d): GEO3D_98.ROM
   The streams are the same for both; only the player's ports change.
-  --music      MIDI played from the start of the crawl (music.py converts it
-               for PSG, SCC + PSG and OPL4/OPL3 FM + PSG; the player uses the
-               best chip it finds). Keep music you do not own out of the
-               repository; without --music the ROM is silent.
+  --music      MIDI or ProTracker MOD (told apart by content) played from the
+               start of the crawl (music.py converts it for PSG, SCC + PSG
+               and OPL4/OPL3 FM + PSG; the player uses the best chip it
+               finds; a MOD plays as a MOD on a MoonSound's wave part). Keep
+               music you do not own out of the repository; without --music
+               the ROM is silent.
 """
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -44,15 +64,29 @@ OUT = os.path.join(HERE, "out")
 sys.path.insert(0, os.path.join(ROOT, "showcase"))
 sys.path.insert(0, Z80)
 
+import g3lz  # noqa: E402
+import modplay  # noqa: E402
 import music  # noqa: E402
 import showcase  # noqa: E402
 from gen_face_tables import palette as logo_palette  # noqa: E402
 
 BANK = 16384
+ROM_BANKS = 32                               # the cartridge: 512 KB
+BLOCK = 8192                                 # decoded block: the player's dz_buf
+AHEAD = 259                                  # the player decodes this far past each op (DZ_AHEAD)
+# The setup frames of the loop demos (first FLIP to MARK) upload tables and
+# textures within a frame; decoding them there would make that frame late
+# (faces 2 -> 4 vblanks, tex 28 -> 38), so they stay raw: about 20 KB more ROM.
+RAW_SETUP_FRAMES = True
+# Everything up to a stream's first FLIP (the uploads behind the black
+# screen before a demo's first frame, and that frame; the menu's picture)
+# stays raw too: decoded, the black screens would last 0.3-0.5 s longer
+# (crawl 0.75 -> 1.23 s, panzoom 0.42 -> 0.67 s, flyin 0.65 -> 1.02 s).
+RAW_SETUP = True
 LOOPS = {"wire": 2, "faces": 2, "tex": 2, "panzoom": 2, "flyin": 2}
 
 OP_END, OP_GEO, OP_GEOD, OP_VREG, OP_VIND, OP_WAITGEO, OP_WAITCE = range(7)
-OP_VRLE, OP_FLIP, OP_MARK, OP_LOOP, OP_NEXTBANK, OP_MENU, OP_PACE, OP_MUSIC = range(7, 15)
+OP_VRLE, OP_FLIP, OP_MARK, OP_LOOP, OP_NEXTBLOCK, OP_MENU, OP_PACE, OP_MUSIC = range(7, 15)
 MUS_NEXTBANK = 0xFE                          # music data: continue in the next bank
 
 # menu order = player's menu_sel (0, 1, 2) = lang_tables order
@@ -288,20 +322,200 @@ def encode(items):
     return ops
 
 
-class Packer:
-    def __init__(self, first_bank):
-        self.banks = [bytearray()]
-        self.first = first_bank
+def op_len(s, q):
+    """length of the op at s[q]"""
+    k = s[q]
+    if k in (OP_GEO, OP_VIND):
+        return 3 + s[q + 2]
+    if k == OP_GEOD:
+        return 2 + s[q + 1]
+    if k == OP_VREG:
+        return 3
+    if k == OP_VRLE:
+        return 6 + (s[q + 4] | s[q + 5] << 8)
+    if k in (OP_FLIP, OP_MARK, OP_PACE):
+        return 2
+    return 1
+
+
+class Blocks:
+    """One stream's ops in blocks of at most BLOCK decoded bytes, each but the
+    last closed by NEXTBLOCK.
+    hot[i]: block i starts between two page flips (after the stream's first
+    FLIP, or at a loop restart), so the player decodes its ops up to its
+    first FLIP on demand, within a frame.
+    raw[i]: block i is stored as it is and the player reads it from ROM:
+    everything up to the stream's first FLIP, that one included (RAW_SETUP;
+    the second frame starts a block), and the setup frames of a loop demo,
+    from the stream's first FLIP to MARK (RAW_SETUP_FRAMES)."""
+    def __init__(self):
+        self.blocks, self.hot, self.raw = [bytearray()], [False], [False]
+        self.first_flip = None                   # the block of the stream's first FLIP
+
+    def end_setup(self):
+        """the stream has no FLIP (the menu): all of it is raw (RAW_SETUP)"""
+        if RAW_SETUP and self.first_flip is None:
+            for i in range(len(self.blocks)):
+                self.raw[i] = True
+
+    def put(self, op):
+        assert len(op) < BLOCK, len(op)
+        if len(self.blocks[-1]) + len(op) > BLOCK - 1:     # NEXTBLOCK must fit too
+            self.cut()
+        self.blocks[-1] += op
+        if op[0] == OP_FLIP and self.first_flip is None:
+            self.first_flip = len(self.blocks) - 1
+            if RAW_SETUP:                        # up to here raw; the second frame
+                for i in range(len(self.blocks)):     # starts a block
+                    self.raw[i] = True
+                self.cut(hot=True)
+
+    def cut(self, hot=False):
+        self.blocks[-1].append(OP_NEXTBLOCK)
+        self.blocks.append(bytearray())
+        self.hot.append(hot or self.first_flip is not None)
+        self.raw.append(False)
+
+    def mark(self, loops):
+        """MARK, the last op of its block: LOOP decodes the body's first block
+        again"""
+        self.put(bytes([OP_MARK, loops]))
+        if RAW_SETUP and self.first_flip is None:   # the setup: raw, and so will be
+            for i in range(len(self.blocks)):       # the loop up to its first FLIP
+                self.raw[i] = True
+        if RAW_SETUP_FRAMES and self.first_flip is not None:
+            for i in range(self.first_flip, len(self.blocks)):
+                self.raw[i] = True
+        self.cut(hot=True)
+
+
+def split_ops(s):
+    """whole ops -> the list of them"""
+    out, q = [], 0
+    while q < len(s):
+        n = op_len(s, q)
+        out.append(bytes(s[q:q + n]))
+        q += n
+    assert q == len(s)
+    return out
+
+
+def player_view(rom, bank, addr):
+    """A stream as the player reads it from the ROM image: block after block
+    (G3LZ or raw, bank escapes followed) up to the one that does not end with
+    NEXTBLOCK. -> its ops without the NEXTBLOCKs. Checks that a G3LZ block
+    fits dz_buf and that MARK is the last op of its block."""
+    pos, out = bank * BANK + addr - 0x8000, []
+    while True:
+        pos = g3lz.skip_bank(rom, pos, BANK)
+        if rom[pos] == 0 and rom[pos + 1] == g3lz.ESC_RAW:
+            q = pos + 2
+            while rom[q] not in (OP_NEXTBLOCK, OP_END, OP_MENU):
+                q += op_len(rom, q)
+            assert pos // BANK == q // BANK, "a raw block across banks"
+            blk, pos = rom[pos + 2:q + 1], q + 1
+        else:
+            blk, pos = g3lz.decompress(rom, pos, BANK)
+            assert len(blk) <= BLOCK
+        ops = split_ops(blk)
+        marks = [i for i, op in enumerate(ops) if op[0] == OP_MARK]
+        assert not marks or (marks == [len(ops) - 2] and ops[-1][0] == OP_NEXTBLOCK), "MARK"
+        if ops[-1][0] != OP_NEXTBLOCK:
+            return out + ops
+        out += ops[:-1]
+
+
+def fast_len(blk):
+    """the bytes of a hot block decoded on demand: its ops up to its first
+    FLIP, plus the player's lookahead (g3lz parses them for speed)"""
+    q = 0
+    while q < len(blk):
+        k = blk[q]
+        q += op_len(blk, q)
+        if k == OP_FLIP:
+            break
+    return q + AHEAD
+
+
+G3LZ_KEY = open(g3lz.__file__, "rb").read()
+
+
+def g3lz_block(blk, fast):
+    """G3LZ bytes of one block; the parse is slow, so it is cached in out/g3lz/
+    (the key covers the compressor's source)"""
+    fn = os.path.join(OUT, "g3lz", hashlib.sha1(G3LZ_KEY + b"%d:" % fast + blk).hexdigest())
+    if os.path.exists(fn):
+        return open(fn, "rb").read()
+    data = g3lz.pack(blk, fast)
+    assert g3lz.decompress(data)[0] == blk
+    os.makedirs(os.path.dirname(fn), exist_ok=True)
+    open(fn + ".tmp", "wb").write(data)
+    os.replace(fn + ".tmp", fn)
+    return data
+
+
+class Rom:
+    """ROM banks from bank `first` on: the compressed streams (a token or a
+    raw block never crosses a bank: the escape 00 01 goes on at 8000h of the
+    next one), then plain data (music) with an end-of-bank opcode."""
+    def __init__(self, first):
+        self.banks, self.first = [bytearray()], first
 
     def here(self):
         return self.first + len(self.banks) - 1, 0x8000 + len(self.banks[-1])
 
-    def put(self, op, nextbank=OP_NEXTBANK):
+    def room(self):
+        return BANK - len(self.banks[-1])
+
+    def next_bank(self):
+        self.banks[-1] += bytes([0, g3lz.ESC_BANK])
+        self.banks.append(bytearray())
+
+    def token(self, t):
+        if self.room() < len(t) + 2:                 # 2 bytes always stay free for 00 01
+            self.next_bank()
+        self.banks[-1] += t
+
+    def raw(self, blk, last=False):
+        """a raw block (it ends with NEXTBLOCK, or it is the stream's last),
+        in pieces that fill the banks: each one 00 02, whole ops, NEXTBLOCK
+        (the block's own for the last; none after the last block's last op,
+        END or MENU)"""
+        q, end = 0, len(blk) - (0 if last else 1)
+        while q < end:
+            e = q
+            while e < end and e + op_len(blk, e) - q <= self.room() - 5:
+                e += op_len(blk, e)
+            if e == q:                               # not even one op fits here
+                self.next_bank()
+                continue
+            self.banks[-1] += (bytes([0, g3lz.ESC_RAW]) + blk[q:e]
+                               + (bytes([OP_NEXTBLOCK]) if not (last and e == end) else b""))
+            q = e
+
+    def stream(self, bl):
+        """-> (bank, address) of the stream's first block"""
+        items = [(True, bytes(blk)) if raw else
+                 (False, g3lz.split(g3lz_block(bytes(blk), fast_len(blk) if hot else 0)))
+                 for blk, hot, raw in zip(bl.blocks, bl.hot, bl.raw)]
+        raw, it = items[0]
+        if self.room() < (op_len(it, 0) + 5 if raw else len(it[0]) + 2):
+            self.banks.append(bytearray())           # the demo table points at a block
+        at = self.here()
+        for i, (raw, it) in enumerate(items):
+            if raw:
+                self.raw(it, i == len(items) - 1)
+            else:
+                for t in it:
+                    self.token(t)
+        return at
+
+    def put(self, op, nextbank):
         assert len(op) < BANK - 1, len(op)
         if len(self.banks[-1]) + len(op) > BANK - 1:
             self.banks[-1].append(nextbank)
             self.banks.append(bytearray())
-        self.banks[-1].extend(op)
+        self.banks[-1] += op
 
 
 PROFILES = {0x88: "GEO3D.ROM", 0x98: "GEO3D_98.ROM"}
@@ -310,7 +524,7 @@ PROFILES = {0x88: "GEO3D.ROM", 0x98: "GEO3D_98.ROM"}
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", type=lambda x: int(x, 0), default=0x88, choices=sorted(PROFILES))
-    ap.add_argument("--music", help="MIDI file for the crawl")
+    ap.add_argument("--music", help="MIDI or MOD file for the crawl")
     args = ap.parse_args()
     base = args.base
     rom_name = PROFILES[base]
@@ -346,33 +560,58 @@ def main():
     s, b = from_show(sh)
     demos.append(("flyin", logo_pal, s, b, LOOPS["flyin"]))
 
-    pk = Packer(1)
-    table, expect = [], {}
+    # a MOD also as a MOD, for a MoonSound (modplay.Song): the part of it the
+    # crawl plays, as long as the conversion, with the same fade; the MOD
+    # player's lookup tables (one bank's worth) first in bank 1
+    nticks = min(crawl_blanks.values())
+    song = None
+    if args.music and music.mod_channels(open(args.music, "rb").read()) is not None:
+        try:
+            song = modplay.Song(args.music, nticks / music.VBLANK_HZ, 180 / music.VBLANK_HZ)
+        except ValueError as e:
+            print(f"MOD: the MoonSound's MOD player can not play it ({e}): only the conversion")
+    pk = Rom(1)
+    if song:
+        pk.banks[-1] += modplay.tables()
+    table, expect, blocks = [], {}, {}
     # the menu first: its picture on page 0, then MENU (it never returns)
     page, _ = menu_page()
     menu_setup = [("XB", 0, bytearray(page))]
-    menu_at = pk.here()
+    bl = Blocks()
     for op in encode(menu_setup):
-        pk.put(op)
-    pk.put(bytes([OP_MENU]))
+        bl.put(op)
+    bl.put(bytes([OP_MENU]))
+    bl.end_setup()
+    menu_at = pk.stream(bl)
+    blocks["menu"] = (menu_at, bl)
     expect["menu"] = expand(menu_setup)
     for name, pal, setup, body, loops in demos:
-        bank, addr = pk.here()
-        table.append((name, bank, addr))
+        bl = Blocks()
         for op in encode(setup):
-            pk.put(op)
+            bl.put(op)
         if body:
-            pk.put(bytes([OP_MARK, loops]))
+            bl.mark(loops)
             for op in encode(body):
-                pk.put(op)
-            pk.put(bytes([OP_LOOP]))
-        pk.put(bytes([OP_END]))
+                bl.put(op)
+            bl.put(bytes([OP_LOOP]))
+        bl.put(bytes([OP_END]))
+        bl.end_setup()
+        bank, addr = pk.stream(bl)
+        table.append((name, bank, addr))
+        blocks[name] = ((bank, addr), bl)
         expect[name] = expand(list(setup) + list(body) * loops)   # PACE carries over, like the player
+    size_all = sum(len(b) for _, bl in blocks.values() for b in bl.blocks)
+    size_raw = sum(len(b) for _, bl in blocks.values() for b, r in zip(bl.blocks, bl.raw) if r)
+    nblk = sum(len(bl.blocks) for _, bl in blocks.values())
+    nraw = sum(sum(bl.raw) for _, bl in blocks.values())
+    packed = sum(map(len, pk.banks))
+    print(f"fluxos: {size_all} bytes em {nblk} blocos ({nraw} crus: {size_raw} bytes) -> {packed} na ROM "
+          f"(G3LZ, {size_all / packed:.2f}x), bancos 1 a {len(pk.banks)}")
+    streams_end = pk.here()
     # music: one stream per target, as long as the shortest crawl (one tick
     # per vertical blank), fading out at its end
     music_at, music_ticks = {}, None
     if args.music:
-        nticks = min(crawl_blanks.values())
         enc, ticks, _, _ = music.convert(args.music, nticks)
         for target in ("psg", "scc", "opl"):
             music_at[target] = pk.here()
@@ -381,7 +620,30 @@ def main():
         music_ticks = {k: [[list(o) for o in ops] for ops in v] for k, v in ticks.items()}
         print("música: " + ", ".join(f"{t} {sum(len(o) for o in enc[t])} bytes" for t in enc)
               + f"; {nticks} ticks")
+    music_end = pk.here()
+    # a MOD also as a MOD, for a MoonSound (modplay.Song.pack): the player's
+    # lookup tables, then the part of the MOD the crawl plays, as long as the
+    # conversion, with the same fade
+    mod_json = None
+    if song:
+        bank, addr = pk.here()
+        if addr >= 0xC000:
+            pk.banks.append(bytearray())
+            bank, addr = pk.here()
+        mbanks, mod_equ = song.pack(bank, addr, tab=(1, 0x8000))
+        pk.banks[-1] += mbanks[0]
+        pk.banks.extend(bytearray(b) for b in mbanks[1:])
+        mod_json = {"writes_start": song.writes_start, "writes": song.writes, "heads": song.heads,
+                    "counts": song.counts, "ideal": song.times()[0], "t2_unit": modplay.T2_UNIT,
+                    "seconds": song.seconds, "image_len": len(song.image),
+                    "image_sha1": hashlib.sha1(song.image).hexdigest(), "blocks": song.rt.blocks,
+                    "used": song.used_channels(), "pans": song.pans}
+        print(f"MOD: {song.summary()}")
+    else:
+        mod_equ = modplay.no_mod_equ()
+    open(os.path.join(HERE, "rom_mod.asm"), "w").write(mod_equ)
     nb = 1 + len(pk.banks)
+    assert nb <= ROM_BANKS, f"{nb} bancos: a ROM tem {ROM_BANKS}"
     size = 1 << (nb - 1).bit_length() if nb > 1 else 1
     where = {name: (bank, addr) for name, bank, addr in table}
     shared = [d[0] for d in demos if not d[0].startswith("crawl_")]
@@ -412,17 +674,56 @@ def main():
     for bnk in pk.banks:
         rom += bnk + bytearray(BANK - len(bnk))
     rom += bytearray(size * BANK - len(rom))
+    # every stream decoded from the ROM image, block after block, as the
+    # player reads it (bank escapes included)
+    for name, ((bank, addr), bl) in blocks.items():
+        want = [op for op in split_ops(b"".join(bl.blocks)) if op[0] != OP_NEXTBLOCK]
+        assert player_view(rom, bank, addr) == want, name
+    if song:
+        mod_check(rom, song)
     open(os.path.join(OUT, rom_name), "wb").write(rom)
     json.dump({"demos": [d[0] for d in demos], "expect": expect, "table": table,
                "langs": [lang for lang, _ in LANGS], "tables": tables,
-               "music": music_ticks},
+               "music": music_ticks, "mod": mod_json},
               open(os.path.join(OUT, "streams.json"), "w"))
     used = sum(len(bk) for bk in pk.banks)
+    free = (ROM_BANKS - nb) * BANK + pk.room()
     print(f"{rom_name} (portas {base:02X}h): {len(rom) // 1024} KB (ASCII16, {size} bancos de 16 KB), "
-          f"player {len(bank0)} bytes, fluxos {used // 1024} KB em {len(pk.banks)} bancos")
+          f"player {len(bank0)} bytes, fluxos e música {used // 1024} KB nos bancos 1 a {nb - 1}")
+    print(f"  livre na ROM de {ROM_BANKS * BANK // 1024} KB: {free} bytes ({free // 1024} KB): "
+          f"banco {nb - 1} de 0x{pk.here()[1]:04x}, bancos {nb} a {ROM_BANKS - 1}; "
+          f"banco 0: {BANK - len(bank0)} bytes")
+    print(f"  fluxos até banco {streams_end[0]} 0x{streams_end[1]:04x}")
+    if args.music:
+        print(f"  música convertida até banco {music_end[0]} 0x{music_end[1]:04x}")
+    if song:
+        (tb, ta), (mb, ma) = song.packed["tables"], song.packed["mod"]
+        print(f"  MOD: tabelas do player {modplay.TAB_LEN} bytes no banco {tb} 0x{ta:04x}, o MOD "
+              f"{song.packed['mod_len']} bytes do banco {mb} 0x{ma:04x} (precisa de {song.rt.blocks} x 128 KB "
+              f"de sample RAM: {len(song.image)} bytes)")
     print(f"  {'menu':8s} banco {menu_at[0]:3d} 0x{menu_at[1]:04x}")
     for (name, bank, addr) in table:
         print(f"  {name:8s} banco {bank:3d} 0x{addr:04x}")
+
+
+def rom_bytes(rom, bank, addr, n):
+    """n bytes of page 2 data from (bank, addr) on, going on at 8000h of the
+    next bank after BFFFh (how geo3d_modplay.asm reads the MOD)"""
+    out = bytearray()
+    while len(out) < n:
+        k = min(n - len(out), 0xC000 - addr)
+        out += rom[bank * BANK + addr - 0x8000:][:k]
+        bank, addr = bank + 1, 0x8000
+    return bytes(out)
+
+
+def mod_check(rom, song):
+    """The MOD's data as geo3d_modplay.asm reads it from the ROM image: the
+    lookup tables (in one bank) and the MOD (on through the banks)."""
+    (tb, ta), (mb, ma) = song.packed["tables"], song.packed["mod"]
+    tab = modplay.tables()
+    assert (ta - 0x8000) + len(tab) <= BANK and rom_bytes(rom, tb, ta, len(tab)) == tab, "MOD player tables"
+    assert rom_bytes(rom, mb, ma, len(song.mod)) == song.mod, "MOD"
 
 
 def expand(items, pace=2):
