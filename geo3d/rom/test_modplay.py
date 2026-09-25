@@ -6,17 +6,38 @@ alone or in the demo ROM.
 
 --z80: builds modplay_test.asm with the MOD (modplay.Song.pack) and runs it in
 the Z80 emulator (pip z80) with an emulated MoonSound (opl4emu.py), in real
-time (T-states): the sample RAM the upload fills, byte for byte; mod_start's
+time (the MSX's clock: T-states and M1 waits, z80clock.py): the sample RAM
+the upload fills, byte for byte; mod_start's
 writes; every wave register write of every tick (between two clears of timer
 2's flag) against modplay.py's model of the player; every tone header it
 loads a RAM tone whose header points into the samples; the timer 2
 periods; no tick lost; the tick and key-on latencies behind the timer. Fast (no
 openMSX), so --selftest runs it on MODs made here: one per group of effects
 (every effect the player takes, 4, 6 and 8 channels, tempo changes, jumps,
-loops, empty samples) and random ones (--fuzz N): the player against its
-model on songs it was not written for. The model plays what ProTracker plays
-(modplay.Player, as OpenMPT, which the audio test checks); in these MODs it
-is the model without play positions (Player(track=False)), the player's.
+loops, empty samples, vibrato and tremolo with every waveform: the probe
+song below, and on 8 channels; ProTracker 2's rules: pt2_rules, and where
+OpenMPT plays them otherwise: pt2_vs_openmpt) and random
+ones (--fuzz N): the player against its model on songs it was not written
+for; then songs that loop (loop_songs: through their end with a Dxx,
+through a jump back), built to loop as the demo ROM's MOD does, over two
+passes and more. The model plays what
+ProTracker plays (modplay.Player, as OpenMPT, which the audio test checks);
+in these MODs it is the model without play positions (Player(track=False)),
+the player's. --lenient tests a MOD the build would refuse the same way
+(where the ROM player does not play what ProTracker plays: an instrument
+swap), and says where.
+
+--probe: the probe song (probe_song: vibrato on a 16-byte triangle on
+channel 0, tremolo on a 256-byte square on channel 1, every waveform, the
+parameter memory, the restarts, row delays, tempo changes) in the test ROM
+in openMSX and in OpenMPT, tick by tick: channel 0's pitch (the triangle's
+zero crossings are 8 bytes apart, whatever the level) and channel 1's level
+(the square's plateaus) against the model's period and volume (OpenMPT) and
+against the registers the Z80 wrote (openMSX), and openMSX against OpenMPT.
+
+--cost: the test ROM in openMSX (the MSX's M1 wait included), each mod_poll
+call timed: the player's work per tick (the polls between two ticks, T-states
+at 3.58 MHz) and its longest poll.
 
 openMSX (default): builds the test ROM, runs it in openMSX with a MoonSound
 (extension moonsound_test: 640 KB sample RAM). With --rom: runs the demo ROM
@@ -35,25 +56,34 @@ It checks:
   audio   openMSX's recording (the mix, and each MOD channel: the sum of
           its three OPL4 channels) against OpenMPT playing the original MOD
           file (openmpt123 set up like the OPL4: linear interpolation, no
-          Amiga resampler or filter, no volume ramping, the Amiga's hard
-          panning), note by note: onset, pitch (resampled correlation),
+          Amiga resampler or filter, no volume ramping (but OpenMPT still
+          spreads a change between two volumes over the tick), the Amiga's
+          hard panning), note by note: onset (looked for around the key
+          on's time in the trace: onset_vs_keyon_ms; the trace's own
+          key-on times are keyon_vs_protracker_ms), pitch (resampled correlation),
           level, and the loops (the sound late in long notes); the mix frame
           by frame and its lag every 2 s (drift). Also the mix's spectrum
           against OpenMPT as a player plays it by default (Amiga resampler
           and filter): the OPL4 interpolates linearly and has no Amiga
           filter, so it is brighter above 10 kHz.
   --rom   also: the upload (its first unit to its end, and the menu), the
-          longest times from one mod_poll call to the next while the song
-          plays (a call that plays a tick counts in), and the crawl's page
+          longest times from one mod_poll or mod_tpoll call to the next while
+          the song plays (a call that plays a tick counts in), and the crawl's page
           flips in vertical blanks (against --flips-ref, a d/f time log of
           another run, e.g. of a ROM without the MOD player).
 
+--rom ROM --loop: the demo ROM's looping MOD, recorded for --seconds from
+mod_start (default 230 s: a pass of the song and its restart), against
+OpenMPT playing the song over and over.
+
 Usage: test_modplay.py MOD [--seconds S] [--fade F] [--gap N] [--work DIR]
                        [--preview DIR] [--tag T] [--no-openmsx]
-                       [--rom ROM [--labels FILE] [--ext "EXT ..."] [--key-at S]
+                       [--rom ROM [--loop] [--labels FILE] [--ext "EXT ..."] [--key-at S]
                         [--flips-ref FILE]]
-       test_modplay.py MOD --z80 [--kb KB] [--gap N]
+       test_modplay.py MOD --z80 [--kb KB] [--gap N] [--lenient]
+       test_modplay.py MOD --cost [--seconds S] [--fade F]
        test_modplay.py --selftest [--fuzz N] [--seed S]
+       test_modplay.py --probe [--no-openmsx]
 Everything made from the MOD (ROM, recordings, renders) goes to --work
 (default rom/out/modplay_test, git-ignored) and --preview: keep it out of
 the repository. WSL / Linux: needs z80asm, the z80 package, numpy; openMSX
@@ -75,6 +105,7 @@ sys.path.insert(0, HERE)
 
 import modplay  # noqa: E402
 import opl4emu  # noqa: E402
+import z80clock  # noqa: E402
 
 RATE = 44100
 BANK = modplay.BANK
@@ -96,7 +127,7 @@ def build(song, work, gap):
     banks, equ = song.pack(1)
     open(os.path.join(work, "rom_mod.asm"), "w").write(equ)
     open(os.path.join(work, "rom_test.asm"), "w").write(
-        f"; generated by test_modplay.py\nT_GAP:  equ {gap}\n")
+        f"; generated by test_modplay.py\nT_GAP:  equ {gap}\nT_MODE: equ 0\nT_RB:   equ 0\n")
     subprocess.run(["z80asm", "-I", work, "-I", HERE, "-o", "bank0.bin", "--label=labels.txt",
                     os.path.join(HERE, "modplay_test.asm")], cwd=work, check=True)
     bank0 = open(os.path.join(work, "bank0.bin"), "rb").read()
@@ -112,9 +143,9 @@ def build(song, work, gap):
 
 
 # -------------------------------------------------------------------- Z80
-def run_z80(rom, labels, kb=640, limit_s=None):
-    """The test ROM in the Z80 emulator, real time (a 3.58 MHz Z80; the pip
-    z80 counts no MSX M1 wait, so it is a little fast), with an emulated
+def run_z80(rom, labels, kb=640, limit_s=None, max_ticks=None):
+    """The test ROM in the Z80 emulator, real time (a 3.58 MHz MSX: the
+    Z80's T-states and the M1 wait states, z80clock.py), with an emulated
     MoonSound of kb KB. -> (MoonSound, info)."""
     import z80
     m = z80.Z80Machine()
@@ -126,10 +157,8 @@ def run_z80(rom, labels, kb=640, limit_s=None):
     m.pc = rom[2] | rom[3] << 8
     ms = opl4emu.MoonSound(kb)
     run = 200000
-    st = {"t0": 0}
-
-    def now():
-        return st["t0"] + run - m.ticks_to_stop
+    clock = z80clock.MsxClock(m)
+    now = clock.now
 
     def on_out(port, v):
         ms.port_out(port & 0xFF, v, now())
@@ -145,9 +174,7 @@ def run_z80(rom, labels, kb=640, limit_s=None):
     info = {}
     limit = (limit_s or 1e9) * opl4emu.T_HZ
     while True:
-        m.ticks_to_stop = run
-        m.run()
-        st["t0"] += run - m.ticks_to_stop
+        clock.run(run)
         pc = m.pc
         if pc in stops:
             if pc == 0x0138:
@@ -157,18 +184,23 @@ def run_z80(rom, labels, kb=640, limit_s=None):
                 m.set_memory_block(0x8000, bytes(rom[b * BANK:(b + 1) * BANK]).ljust(BANK, b"\xFF"))
             elif pc == labels["mod_upload"]:
                 ms.counting = True
-                info["up0"] = st["t0"]
+                info["up0"] = now()
             elif pc == labels["mod_start"]:
                 ms.counting = False
-                info["start"] = st["t0"]
-            m.ticks_to_stop = run
-            m.step_over_breakpoint()
-            st["t0"] += run - m.ticks_to_stop
+                info["start"] = now()
+            clock.step_over()
         phase = m.memory[0xC000]
-        if phase in (3, 0xEE) or m.halted or st["t0"] > limit:
+        if phase in (3, 0xEE) or m.halted or now() > limit:
             break
-    info.update(phase=phase, blocks=m.memory[0xC001], end=st["t0"],
-                ticks=m.memory[labels["mp_ticks"]] | m.memory[labels["mp_ticks"] + 1] << 8)
+        tk = m.memory[labels["mp_ticks"]] | m.memory[labels["mp_ticks"] + 1] << 8
+        if tk < info.get("tk16", 0):
+            info["wraps"] = info.get("wraps", 0) + 1         # (mp_ticks is 16 bits)
+        info["tk16"] = tk
+        if max_ticks and tk + 65536 * info.get("wraps", 0) >= max_ticks:
+            break
+    info.update(phase=phase, blocks=m.memory[0xC001], end=now(),
+                ticks=(m.memory[labels["mp_ticks"]] | m.memory[labels["mp_ticks"] + 1] << 8)
+                + 65536 * info.get("wraps", 0))
     return ms, info
 
 
@@ -224,7 +256,8 @@ def z80_test(song, work, kb=640, gap=0, quiet=False):
     rom_path, b0, labels = build(song, work, gap)
     rom = open(rom_path, "rb").read()
     t0 = time.time()
-    ms, info = run_z80(rom, labels, kb, song.seconds + 10)
+    # (a looping song has no END: the run stops before the model's ticks do)
+    ms, info = run_z80(rom, labels, kb, song.seconds + 10, len(song.ticks) - 2 if song.loop else None)
     rep = dict(emulator_s=round(time.time() - t0, 1), phase=info["phase"], blocks_found=info["blocks"],
                module_bytes=labels["mp_new2"] + 20 - labels["mod_reset"], bank0_bytes=b0)
     if song.rt.blocks * 128 > kb:
@@ -236,7 +269,11 @@ def z80_test(song, work, kb=640, gap=0, quiet=False):
     rep["upload_ms"] = round((ms.mem_t[1] - ms.mem_t[0]) / opl4emu.T_HZ * 1e3, 1) if ms.mem_t else None
     ok, play = check_play(song, ms)
     rep.update(play)
-    ok = ok and rep["image_ok"] and info["phase"] == 3 and rep.get("end_reached")
+    if song.loop:                           # every pass but part of the last one, and the loops
+        rep["passes"] = sum(1 for b in song.pass_starts[1:] if b <= rep["ticks"])
+        ok = ok and rep["image_ok"] and info["phase"] == 2 and rep["passes"] >= len(song.pass_starts) - 2
+    else:
+        ok = ok and rep["image_ok"] and info["phase"] == 3 and rep.get("end_reached")
     return ok, rep
 
 
@@ -384,7 +421,7 @@ def cover_songs():
     put(b, 33, 1, 0, None, 0xF, 0x7D)
     put(b, 36, 2, 6, 10, 0xB, 3)                    # jump to position 3
     put(c, 0, 0, 7, 1, 0xE, 0xE1)
-    put(c, 0, 1, 0, None, 0xE, 0xE5)                # the first EEx counts
+    put(c, 0, 1, 0, None, 0xE, 0xE5)                # the last EEx counts (ProTracker)
     put(c, 2, 2, 4, 30, 0xD, 0x99)                  # break past 63: row 0
     songs.append(("song", 4, std_samples(), [0, 1, 2, 2, 1], [a, b, c]))
     # 4, 5: 6 and 8 channels (rows of 24 and 32 bytes)
@@ -396,7 +433,177 @@ def cover_songs():
                     put(p, r, ch, 1 + (r + ch) % 7, (r + 3 * ch) % 36, (0, 0xA, 0xC, 1)[ch % 4],
                         (0, 0x01, 30 + ch, 2)[ch % 4])
         songs.append((f"{nch} channels", nch, std_samples(), [0, 0], [p]))
+    # 6: vibrato and tremolo (the probe song), 7: both on 8 channels
+    songs.append(("vib / trem", 4) + probe_song())
+    p = empty(8)
+    for r in range(64):
+        for ch in range(8):
+            if r % 8 == ch % 4 * 2:
+                put(p, r, ch, 1 + (r + ch) % 7, (r + 5 * ch) % 36, (4, 6, 7, 4)[ch % 4],
+                    (0x48 + ch, 0x21, 0x8C - ch, 0xF3)[ch % 4])
+            elif r % 2:
+                put(p, r, ch, 0, None, (4, 6, 7, 0xE)[(r // 2 + ch) % 4],
+                    (0, 0x04, 0x30 + ch, 0x40 | (r + ch) % 8)[(r // 2 + ch) % 4])
+    put(p, 20, 0, 0, None, 0xE, 0x71)
+    put(p, 21, 0, 0, None, 7, 0xF8)
+    songs.append(("vib/trem 8ch", 8, std_samples(), [0, 0], [p]))
+    songs.append(("pt2 rules", 4, std_samples(), [0, 1, 0], pt2_rules()))
+    songs.append(("pt2 vs mpt", 4, std_samples(), [0, 0], pt2_vs_openmpt()))
     return songs
+
+
+def pt2_rules():
+    """The ProTracker 2 rules a review found (checked against OpenMPT): the
+    last EEx of a row counts; the delayed note (EDx) and E9x without a note
+    play on each EEx repeat; 9xx without a note moves the stacked offset;
+    E5x without a note sets the finetune; E9x with a lone instrument number
+    retriggers that sample, at the finetune the row started with; a lone
+    empty sample sets its volume; Bxx after a Dxx clears its row; a jump or
+    a break after a row delay skips the target row."""
+    a, b = empty(4), empty(4)
+    put(a, 0, 0, 1, 12)
+    put(a, 1, 0, 0, None, 0xE, 0xE1)
+    put(a, 1, 1, 0, None, 0xE, 0xE2)                # the last EEx: 3 times
+    put(a, 2, 0, 1, 14, 0xE, 0xD2)
+    put(a, 2, 1, 0, None, 0xE, 0xE1)                # the delayed note on each repeat
+    put(a, 3, 0, 0, None, 0xE, 0x93)
+    put(a, 3, 1, 0, None, 0xE, 0xE1)                # E9x without a note on each repeat
+    put(a, 4, 0, 0, None, 0x9, 0x10)                # 9xx without a note: the stack moves
+    put(a, 6, 0, 0, 16)                             # a note without instrument: from there
+    put(a, 8, 0, 0, None, 0xE, 0x57)                # E5x without a note
+    put(a, 10, 0, 0, 18)                            # a note at that finetune
+    put(a, 12, 0, 4, None, 0xE, 0x92)               # a lone instrument (finetune -3) + E92
+    put(a, 14, 2, 1, 20)
+    put(a, 16, 2, 3, None)                          # a lone empty sample: its volume
+    put(a, 17, 2, 0, None, 0xA, 0x01)
+    put(a, 18, 3, 1, 12, 0xD, 0x05)
+    put(a, 18, 2, 0, None, 0xB, 0x01)               # Bxx after Dxx: row 0 of position 1
+    put(b, 0, 0, 2, 12, 0xD, 0x10)
+    put(b, 0, 1, 0, None, 0xE, 0xE1)                # a break after a row delay: row 11
+    put(b, 11, 0, 1, 24)
+    put(b, 12, 1, 0, None, 0xB, 0x02)
+    put(b, 12, 2, 0, None, 0xE, 0xE1)               # a jump after a row delay: row 1
+    put(b, 13, 0, 6, 30)
+    return [a, b]
+
+
+def pt2_vs_openmpt():
+    """The four cases where the model follows ProTracker 2 and OpenMPT plays
+    otherwise (modplay.py): an arpeggio on a period a slide left off the
+    table, an arpeggio and ECx (x at or past the speed) on rows with EEx, a
+    tempo on a speed-1 row with EEx."""
+    c = empty(4)
+    put(c, 0, 0, 1, 12, 0x1, 0x03)                  # C-2 sliding up: off the table
+    put(c, 1, 0, 0, None, 0x0, 0x47)                # an arpeggio on it
+    put(c, 2, 3, 0, None, 0xF, 0x04)                # speed 4
+    put(c, 3, 1, 2, 17, 0x0, 0x37)
+    put(c, 3, 2, 0, None, 0xE, 0xE2)                # an arpeggio on a row with EEx
+    put(c, 5, 1, 6, 19, 0xE, 0xC5)
+    put(c, 5, 2, 0, None, 0xE, 0xE1)                # EC5 at speed 4 with EEx: no cut
+    put(c, 7, 3, 0, None, 0xF, 0x01)                # speed 1
+    put(c, 8, 0, 1, 24, 0xF, 0x5A)
+    put(c, 8, 2, 0, None, 0xE, 0xE2)                # a tempo on a speed-1 row with EEx
+    put(c, 9, 1, 2, 26, 0xF, 0x06)
+    put(c, 10, 0, 0, None, 0xF, 0x7D)               # back to speed 6, 125 BPM
+    put(c, 11, 1, 4, 12)
+    put(c, 20, 0, 0, None, 0xD, 0x00)               # (the next position)
+    return [c]
+
+
+def loop_songs():
+    """(name, channels, samples, order, patterns) that loop in other ways:
+    through their end (a Dxx on the last position: the next pass starts on
+    its row), through a jump back, and the song-wide cover song."""
+    songs = []
+    a, b = empty(4), empty(4)
+    put(a, 0, 0, 1, 12, 0xF, 3)
+    put(a, 5, 1, 4, 17)
+    put(a, 9, 2, 6, 5, 0xD, 0x00)
+    put(b, 0, 0, 2, 14)
+    put(b, 1, 3, 0, None, 0xD, 0x05)                # the end: position 0, row 5
+    songs.append(("end + Dxx", 4, std_samples(), [0, 1], [a, b]))
+    a, b = empty(4), empty(4)
+    put(a, 0, 0, 1, 12, 0xF, 4)
+    put(a, 3, 1, 4, 20, 0x9, 0x08)
+    put(a, 6, 2, 0, None, 0xD, 0x00)
+    put(b, 0, 0, 5, 7)
+    put(b, 2, 1, 0, None, 0x9, 0x10)
+    put(b, 4, 2, 0, None, 0xB, 0x01)                # back to position 1: the loop
+    songs.append(("jump back", 4, std_samples(), [0, 1], [a, b]))
+    songs.append(next(c for c in cover_songs() if c[0] == "pt2 rules"))
+    return songs
+
+
+TRIANGLE = bytes(v & 0xFF for v in (0, 32, 64, 96, 127, 96, 64, 32, 0, -32, -64, -96, -127, -96, -64, -32))
+SQUARE = bytes([127] * 128 + [(-127) & 0xFF] * 128)
+NOTES = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"]
+
+
+def probe_song():
+    """(samples, order, patterns) of a MOD whose channel 0 plays vibrato (4xy,
+    6xy, E4x) on a 16-byte triangle, channel 1 tremolo (7xy, E7x) on a 256-byte
+    square, channel 2 both on other samples (an empty one, a one-shot that
+    runs out), channel 3 the song-wide effects: the pitch of channel 0 and the
+    level of channel 1 can be measured tick by tick in a recording (--probe):
+    the triangle's zero crossings are 8 bytes apart whatever the level, the
+    square's plateaus give the level. Every waveform, the parameter memory,
+    the restart on notes (not with E4x / E7x + 4), row delays, speed and tempo
+    changes, note delay, retrigger, the tremolo's ramp that follows the
+    vibrato position, volume 0, the limits."""
+    smps = [(TRIANGLE, 64, 0, 0, 16), (SQUARE, 64, 0, 0, 256), (TRIANGLE, 48, 5, 0, 16),
+            (wave(3000, "noise", 3), 50, 0, 0, 0), (b"", 40, 0, 0, 0), (wave(2048, "sq"), 60, 13, 0, 2048)]
+    a, b = empty(4), empty(4)
+
+    def p(pat, ch, r, s=0, n=None, e=0, x=0):
+        put(pat, r, ch, s, None if n is None else NOTES.index(n[:2]) + 12 * (int(n[2]) - 1), e, x)
+    for r, s, n, e, x in [                       # channel 0: vibrato, pattern 0
+            (0, 1, "C-2", 4, 0x48), (1, 0, None, 4, 0), (2, 0, None, 4, 0x0C), (3, 0, None, 4, 0x80),
+            (4, 1, "C-2", 4, 0), (5, 0, None, 0xE, 0x41), (6, 0, None, 4, 0x46), (7, 0, None, 4, 0),
+            (8, 1, "D-2", 4, 0), (9, 0, None, 0xE, 0x42), (10, 0, None, 4, 0x3F), (11, 0, None, 0xE, 0x43),
+            (12, 0, None, 4, 0x2F), (13, 1, "C-2", 0xE, 0x44), (14, 0, None, 4, 0x44), (15, 1, "E-2", 4, 0),
+            (16, 0, None, 6, 0x02), (17, 0, None, 6, 0x20), (18, 0, None, 6, 0x00), (19, 0, None, 4, 0),
+            (20, 1, "C-2", 0xE, 0x40), (21, 0, None, 4, 0x88), (22, 0, None, 0xE, 0x93), (23, 0, None, 4, 0),
+            (24, 1, "G-2", 0xE, 0xD2), (25, 0, None, 4, 0), (26, 1, "C-3", 3, 0x08), (27, 0, None, 4, 0),
+            (28, 0, None, 1, 4), (29, 0, None, 4, 0x4F), (30, 1, "B-3", 4, 0x4F), (31, 1, "C-1", 4, 0x4F),
+            (32, 0, None, 4, 0), (33, 1, "A-2", 0xE, 0x4B), (34, 0, None, 4, 0x6A), (35, 1, "A-2", 4, 0),
+            (36, 0, None, 0xE, 0x47), (37, 1, "F-2", 4, 0x19), (38, 3, "F-2", 4, 0x35), (39, 0, None, 4, 0),
+            (40, 3, "A#1", 0xE, 0x40), (41, 0, None, 4, 0xF1), (42, 0, None, 0xE, 0x52), (43, 1, "C-2", 4, 0x21),
+            (44, 0, None, 4, 0xE3), (45, 0, None, 5, 0x01), (46, 0, None, 4, 0), (47, 0, None, 0xE, 0x10),
+            (48, 0, None, 4, 0x39), (49, 1, "C#2", 6, 0x05), (50, 0, None, 6, 0x40), (51, 0, None, 0xE, 0x41),
+            (52, 1, "C-2", 4, 0x7C), (53, 0, None, 4, 0), (54, 0, None, 0xE, 0x4A), (55, 0, None, 4, 0xB9),
+            (56, 1, "D#2", 0, 0), (57, 0, None, 4, 0x00), (58, 0, None, 0xC, 0), (59, 0, None, 4, 0),
+            (60, 0, None, 0xC, 0x30), (61, 0, None, 6, 0xA0), (62, 0, None, 6, 0x0F), (63, 0, None, 4, 0)]:
+        p(a, 0, r, s, n, e, x)
+    for r, s, n, e, x in [                       # channel 1: tremolo, pattern 0
+            (0, 2, "C-1", 7, 0x48), (1, 0, None, 7, 0), (2, 0, None, 0xC, 0x20), (3, 0, None, 7, 0x8F),
+            (4, 0, None, 0xE, 0x71), (5, 0, None, 7, 0), (6, 0, None, 0xE, 0x72), (7, 0, None, 7, 0),
+            (8, 0, None, 0xE, 0x73), (9, 0, None, 7, 0), (10, 2, "C-1", 7, 0), (11, 0, None, 7, 0x4F),
+            (12, 0, None, 0xC, 0), (13, 0, None, 7, 0), (14, 0, None, 0xC, 0x10), (15, 0, None, 7, 0),
+            (16, 0, None, 0xA, 0x04), (17, 0, None, 7, 0), (18, 0, None, 0xE, 0x74), (19, 2, "C-1", 7, 0),
+            (20, 0, None, 0xE, 0x71), (21, 0, None, 7, 0x1F), (22, 0, None, 4, 0x80), (23, 0, None, 4, 0),
+            (24, 0, None, 7, 0x33), (25, 0, None, 7, 0), (26, 0, None, 0xE, 0x70), (27, 2, "C-1", 7, 0xC8),
+            (28, 0, None, 7, 0), (29, 0, None, 0xE, 0x92), (30, 0, None, 7, 0), (31, 2, "C-1", 0xE, 0xD3),
+            (32, 0, None, 7, 0x2A), (33, 0, None, 0xC, 0x3C), (34, 0, None, 7, 0xFF), (35, 0, None, 0xE, 0xA8),
+            (36, 0, None, 7, 0x61), (37, 0, None, 0xE, 0x7B), (38, 0, None, 7, 0), (39, 2, "D-1", 7, 0x44),
+            (40, 0, None, 7, 0), (41, 0, None, 0xE, 0x7E), (42, 2, "D-1", 7, 0x0F), (43, 0, None, 7, 0),
+            (44, 0, None, 0xE, 0x7D), (45, 2, "C-1", 7, 0x9C), (46, 0, None, 0xE, 0x75), (47, 2, "C-1", 7, 0),
+            (48, 0, None, 7, 0), (49, 0, None, 5, 0x03), (50, 0, None, 7, 0x81), (51, 0, None, 0xE, 0xB4),
+            (52, 0, None, 7, 0), (53, 2, "C-1", 0xC, 0x08), (54, 0, None, 7, 0x88), (55, 0, None, 7, 0)]:
+        p(a, 1, r, s, n, e, x)
+    for r, s, n, e, x in [                       # channel 2: an empty sample, a one-shot, a swap
+            (0, 4, "C-2", 4, 0x44), (2, 0, None, 4, 0), (4, 5, "C-2", 4, 0), (5, 0, None, 4, 0),
+            (6, 4, None, 4, 0), (8, 4, "E-2", 7, 0x6C), (9, 0, None, 7, 0), (12, 6, "G-1", 6, 0x01),
+            (13, 0, None, 6, 0x10), (14, 0, "G-1", 0xE, 0xD3), (15, 0, None, 4, 0x2C), (16, 0, None, 7, 0x2C),
+            (20, 4, "A-2", 7, 0x6F), (23, 0, None, 7, 0), (40, 0, None, 7, 0), (41, 0, None, 7, 0),
+            (44, 4, "C-3", 4, 0x5F)]:
+        p(a, 2, r, s, n, e, x)
+    for r, e, x in [(19, 0xE, 0xE1), (28, 0xE, 0xE2), (32, 0xF, 3), (44, 0xF, 6), (47, 0xF, 0x96),
+                    (53, 0xF, 0x7D)]:            # channel 3: row delays, speed, tempo
+        p(a, 3, r, 0, None, e, x)
+    for c, s, n in ((0, 1, "C-2"), (1, 2, "C-1")):   # pattern 1: plain notes (the level and
+        p(b, c, 0, s, n)                        # pitch references)
+    p(b, 3, 8, 0, None, 0xB, 0)
+    return smps, [0, 1], [a, b]
 
 
 def random_song(rnd):
@@ -409,7 +616,9 @@ def random_song(rnd):
               [0x10 | rnd.randint(0, 15), 0x20 | rnd.randint(0, 15), 0x50 | rnd.randint(0, 15),
                0x90 | rnd.randint(0, 6), 0xA0 | rnd.randint(0, 15), 0xB0 | rnd.randint(0, 15),
                0xC0 | rnd.randint(0, 6), 0xD0 | rnd.randint(0, 8), 0x60 | rnd.randint(0, 2),
-               0xE0 | rnd.randint(0, 2)])),
+               0xE0 | rnd.randint(0, 2), 0x40 | rnd.randint(0, 15), 0x70 | rnd.randint(0, 15)])),
+          (4, lambda: rnd.randint(0, 255)), (6, lambda: rnd.choice([0x10, 0x03, 0x40, 0])),
+          (7, lambda: rnd.randint(0, 255)), (4, lambda: rnd.choice([0, 0x0F, 0xF0])),
           (0xF, lambda: rnd.choice([rnd.randint(1, 8), rnd.randint(0x20, 0xFF)])),
           (0xD, lambda: rnd.choice([0, 0x10, 0x32, 0x63])), (0xB, lambda: rnd.randint(0, 4))]
     npat = rnd.randint(1, 3)
@@ -456,8 +665,25 @@ def selftest(work, fuzz, seed):
               + (f" (model: {song.problems[0][:90]})" if song.problems else ""), flush=True)
         if not ok:
             print("     " + json.dumps({k: rep[k] for k in rep if k not in keep}, default=str)[:1500])
-    print(f"self test: {npass}/{len(songs)} PASS")
-    return npass == len(songs)
+    nloop = 0
+    loops = loop_songs()
+    for i, (name, nch, smps, order, pats) in enumerate(loops):
+        path = os.path.join(work, f"loop{i}.mod")
+        open(path, "wb").write(mod_file(nch, smps, order, pats))
+        try:
+            song = modplay.Song(path, strict=False, loop=True, passes=3)
+        except ValueError as e:
+            print(f"loop {i} {name:12s}: the model refuses it: {e}")
+            continue
+        ok, rep = z80_test(song, work)
+        nloop += ok
+        print(f"loop {i} {name:12s} {nch} ch: {'PASS' if ok else 'FAIL'} passes {rep.get('passes')} of "
+              f"{len(song.pass_starts) - 1} (every {song.pass_starts[1]} ticks), ticks {rep.get('ticks')}/"
+              f"{rep.get('model_ticks')}, ticks_ok {rep.get('ticks_ok')}, lost {rep.get('lost')}", flush=True)
+        if not ok:
+            print("     " + json.dumps(rep, default=str)[:1500])
+    print(f"self test: {npass}/{len(songs)} PASS; looping: {nloop}/{len(loops)} PASS")
+    return npass == len(songs) and nloop == len(loops)
 
 
 # ---------------------------------------------------------------- openMSX
@@ -583,8 +809,9 @@ debug set_bp %(us_done)d {} { note up1 }
 debug set_bp %(op_menu)d {} { note menu }
 debug set_bp %(demo_init)d {} { note d }
 debug set_bp %(fl_flip)d {} { note f }
-debug set_bp %(mod_start)d {} start
+debug set_bp %(mod_start)d {} { start; if {%(span)f > 0} { after time %(span)f finish } }
 debug set_bp %(mod_poll)d {} poll
+if {%(mod_tpoll)d} { debug set_bp %(mod_tpoll)d {} poll }
 debug set_bp %(mp_end)d {} { if {$::on} { after time 0.3 finish } }
 after time %(key)f { keymatrixdown 0 0x02 }
 after time [expr {%(key)f + 0.2}] { keymatrixup 0 0x02 }
@@ -592,14 +819,16 @@ after time %(limit)f finish
 """
 
 
-def run_openmsx_rom(rom, work, song, labels, ext, key_at):
+def run_openmsx_rom(rom, work, song, labels, ext, key_at, span=0.0):
     """The demo ROM, with the MoonSound: the crawl in English, its music
-    recorded from mod_start to the MOD's stop (see ROM_TCL)."""
+    recorded from mod_start to the MOD's stop (see ROM_TCL), or for span
+    seconds (a MOD that loops: it never stops)."""
     tcl = os.path.join(work, "run.tcl")
     chans = " ".join(str(o + 1) for o in sorted(song.used_channels()))
     names = ("us_page", "us_done", "op_menu", "demo_init", "fl_flip", "mod_start", "mod_poll", "mp_end")
     open(tcl, "w").write(ROM_TCL % dict(work=work, chans=chans, dev=WAVE_DEV, key=key_at, nimg=len(song.image),
-                                        limit=key_at + song.seconds + 30, **{k: labels[k] for k in names}))
+                                        span=span, limit=key_at + (span or song.seconds) + 30,
+                                        mod_tpoll=labels.get("mod_tpoll", 0), **{k: labels[k] for k in names}))
     return openmsx(["-machine", "C-BIOS_V9968_JP"] + [x for e in ext.split() for x in ("-ext", e)]
                    + ["-cart", rom, "-romtype", "ASCII16", "-script", tcl], work, 1800)
 
@@ -709,7 +938,8 @@ def check_trace(song, tr):
                               last_10s=float(np.abs(drift[pt > pt[-1] - 10]).max() * 1e3)),
         keyon=len(kon),
         keyon_vs_protracker_ms=dict(min=float(kerr.min() * 1e3), max=float(kerr.max() * 1e3),
-                                    mean=float(kerr.mean() * 1e3)),
+                                    mean=float(kerr.mean() * 1e3), p99=float(np.percentile(kerr, 99) * 1e3),
+                                    over_4ms=int((kerr > 0.004).sum())),
         start=start, end=tr["end"]), kon
 
 
@@ -732,7 +962,7 @@ def solo_mod(data, keep):
     return bytes(d)
 
 
-def openmpt(mod_bytes, name, work, seconds, linear=True):
+def openmpt(mod_bytes, name, work, seconds, linear=True, repeat=0):
     """openmpt123 render. linear: the measuring reference (linear
     interpolation like the OPL4, no Amiga resampler or filter, no volume
     ramping, stereo separation 200 %: the Amiga's hard panning; OpenMPT's
@@ -743,7 +973,7 @@ def openmpt(mod_bytes, name, work, seconds, linear=True):
     opts = (["--stereo", "200", "--filter", "2", "--ramping", "0", "--ctl", "render.resampler.emulate_amiga=0"]
             if linear else [])
     subprocess.run(["openmpt123", "--render", "--force", "--quiet", "--samplerate", str(RATE), "--channels", "2",
-                    "--end-time", f"{seconds:.3f}", "--output-type", "wav"] + opts + [path],
+                    "--end-time", f"{seconds:.3f}", "--output-type", "wav", "--repeat", str(repeat)] + opts + [path],
                    check=True, stdout=subprocess.DEVNULL)
     os.remove(path)
     return path + ".wav"
@@ -805,19 +1035,23 @@ def notes_of(song, c):
     return ns
 
 
-def best_lag(x, y, maxlag):
-    """Lag (samples) that best aligns x to y: x[i + lag] ~ y[i]."""
+def best_lag(x, y, maxlag, near0=0.0):
+    """Lag (samples) that best aligns x to y: x[i + lag] ~ y[i]. near0: of
+    the lags whose match is within near0 of the best, the one nearest 0 (a
+    periodic sample matches as well a period away)."""
     import numpy as np
     n = len(y)
-    best, bl = -2, 0
+    cs = []
     for lag in range(-maxlag, maxlag + 1):
         a = x[maxlag + lag:maxlag + lag + n]
         if len(a) < n:
             continue
-        c = np.dot(a, y) / (np.linalg.norm(a) * np.linalg.norm(y) + 1e-12)
-        if c > best:
-            best, bl = c, lag
-    return bl, best
+        cs.append((np.dot(a, y) / (np.linalg.norm(a) * np.linalg.norm(y) + 1e-12), lag))
+    if not cs:
+        return 0, -2
+    best = max(c for c, _ in cs)
+    c, bl = min(((c, lag) for c, lag in cs if c >= best - near0), key=lambda cl: abs(cl[1]))
+    return bl, c
 
 
 def pitch_ratio(x, y, cents=12.0, step=0.25):
@@ -844,10 +1078,13 @@ def pitch_ratio(x, y, cents=12.0, step=0.25):
     return float(grid[k] + off * step), float(cs[k])
 
 
-def compare_channel(song, c, xm, ym, x_off, y_times):
+def compare_channel(song, c, xm, ym, x_off, y_times, kon_late=None):
     """Note by note: openMSX channel c (xm, aligned so that ProTracker time
     t is sample (t + x_off) * RATE) against OpenMPT's solo render (ym, tick
-    times y_times)."""
+    times y_times). kon_late {(tick, channel): s}: how late the trace shows
+    each key on; the onset is looked for around it (a periodic sample
+    matches as well a period away), and onset_vs_keyon_ms is the sound's
+    onset against it."""
     import numpy as np
     res = []
     for tick, t0, t1, smp, off, per, vol in notes_of(song, c):
@@ -858,12 +1095,17 @@ def compare_channel(song, c, xm, ym, x_off, y_times):
         ys = int(round(y_times[tick] * RATE))
         w = int(min(dur - 0.005, 0.25) * RATE)
         pad = int(0.004 * RATE)
+        kl = (kon_late or {}).get((tick, c), 0.0)
+        xs += int(round(kl * RATE))                 # (around the key on's time in the trace)
         if xs - pad < 0 or xs + w + pad > len(xm) or ys + w > len(ym):
             continue
         y = ym[ys:ys + w]
         if np.sqrt(np.mean(y ** 2)) < 1e-4:
             continue
-        lag, _ = best_lag(xm[xs - pad:xs + w + pad], ym[ys:ys + int(0.03 * RATE)], pad)
+        lag, _ = best_lag(xm[xs - pad:xs + w + pad], ym[ys:ys + int(0.03 * RATE)], pad, near0=0.02)
+        lag_kon = lag
+        lag += int(round(kl * RATE))
+        xs -= int(round(kl * RATE))
         x = xm[xs + lag:xs + lag + w]
         cents, match = pitch_ratio(x, y)
         r38, r20 = modplay.pitch_of(per)
@@ -881,6 +1123,7 @@ def compare_channel(song, c, xm, ym, x_off, y_times):
                             level_db=20 * math.log10((np.sqrt(np.mean(xm[xl0 + lag2:xl0 + lag2 + wl] ** 2)) + 1e-12)
                                                      / (np.sqrt(np.mean(yl ** 2)) + 1e-12)))
         res.append(dict(ch=c, tick=tick, t=t0, smp=smp, off=off, per=per / 4, vol=vol, onset_ms=lag / RATE * 1e3,
+                        onset_vs_keyon_ms=lag_kon / RATE * 1e3,
                         cents=cents, cents_regs=want, match=match, level_db=lv, late=late))
     return res
 
@@ -915,6 +1158,208 @@ def bands_db(x, y, edges=(250, 1000, 4000, 10000, 12000, 16000, 22050)):
     return out
 
 
+# ------------------------------------------------------------------- cost
+COST_TCL = r"""
+set renderer none
+set throttle off
+set ::f [open "%(work)s/cost.txt" w]
+set ::tin 0
+set ::on 0
+set ::fsel 0
+proc pin {} { set ::tin [machine_info time] }
+proc pout {} {
+    if {!$::on} return
+    set d [expr {[machine_info time] - $::tin}]
+    if {$d > 0.00002} { puts $::f "p $::tin $d" }
+}
+proc fmw {} {
+    if {($::wp_last_address & 0xFF) == 0xC4} { set ::fsel $::wp_last_value; return }
+    if {$::fsel != 4} return
+    set v $::wp_last_value
+    if {$v == 0x80} { puts $::f "c [machine_info time]" }
+    if {$v == 0x42} { set ::on 1; puts $::f "s [machine_info time]" }
+    if {$v == 0x60 && $::on} { set ::on 0 }
+}
+proc done {} { close $::f; exit }
+debug set_watchpoint write_io {0xC4 0xC5} {} fmw
+debug set_bp %(poll)d {} pin
+debug set_bp %(ret)d {} pout
+debug set_watchpoint write_mem 0xC000 {} { if {$::wp_last_value == 3 || $::wp_last_value == 238} { after time 0.1 done } }
+after time %(limit)f done
+"""
+
+
+def cost_test(song, work):
+    """The test ROM in openMSX, every mod_poll call timed (breakpoints on the
+    call and its return; the polls that do nothing, under 20 us, left out):
+    per tick, the T-states (3.58 MHz, M1 wait included) of the polls between
+    its start and the next one's, which work out the next tick; the longest
+    poll. -> report."""
+    rom, _, labels = build(song, work, 0)
+    tcl = os.path.join(work, "cost.tcl")
+    open(tcl, "w").write(COST_TCL % dict(work=work, poll=labels["mod_poll"], ret=labels["t_loop"] + 3,
+                                         limit=song.seconds + 25))
+    openmsx(["-machine", "C-BIOS_V9968_JP", "-ext", "moonsound_test", "-cart", rom, "-romtype", "ASCII16",
+             "-script", tcl], work, 1800)
+    polls, marks = [], []
+    for line in open(os.path.join(work, "cost.txt")):
+        p = line.split()
+        if p[0] == "p":
+            polls.append((float(p[1]), float(p[2])))
+        elif p[0] in "sc":
+            marks.append(float(p[1]))
+    hz = opl4emu.T_HZ
+    per_tick, j, longest = [], 0, 0.0
+    for a, b in zip(marks, marks[1:]):
+        while j < len(polls) and polls[j][0] < a:
+            j += 1
+        w = 0.0
+        while j < len(polls) and polls[j][0] < b:
+            w += polls[j][1]
+            longest = max(longest, polls[j][1])
+            j += 1
+        per_tick.append(w * hz)
+    wt = sorted(per_tick)
+    tick = 2.5 / 125 * hz
+    return dict(ticks=len(wt), module_bytes=labels["mp_new2"] + 20 - labels["mod_reset"],
+                work_T_per_tick=dict(mean=round(sum(wt) / len(wt)), median=round(wt[len(wt) // 2]),
+                                     p99=round(wt[int(len(wt) * 0.99)]), max=round(wt[-1])),
+                longest_poll_T=round(longest * hz),
+                cpu_at_125_bpm_pct=dict(mean=round(100 * sum(wt) / len(wt) / tick, 1),
+                                        max=round(100 * wt[-1] / tick, 1)))
+
+
+# ------------------------------------------------------------------ probe
+def probe_pitch(seg):
+    """The rate (bytes per output sample) of the probe's triangle in seg: its
+    zero crossings are 8 bytes apart, whatever the level. None: too few."""
+    import numpy as np
+    s = np.sign(seg)
+    i = np.nonzero((s[:-1] != s[1:]) & (s[:-1] != 0))[0]
+    if len(i) < 3:
+        return None
+    tz = i + seg[i] / (seg[i] - seg[i + 1])
+    return 8 / np.polyfit(np.arange(len(tz)), tz, 1)[0]
+
+
+def probe_level(seg, end):
+    """The level of the probe's square at index end of seg (its plateaus,
+    fitted with a line: OpenMPT ramps a volume change over the tick)."""
+    import numpy as np
+    v = np.abs(seg)
+    d = np.abs(np.diff(v))
+    keep = np.nonzero(d < 3 * np.median(d) + 1e-6)[0]
+    if len(keep) < 50 or v[keep].max() < 1e-5:
+        return 0.0
+    return float(max(0.0, np.polyval(np.polyfit(keep, v[keep], 1), end)))
+
+
+def probe_ticks(song):
+    """The ticks of the probe song's first pass (to the jump back to row 0)."""
+    return next(i for i, tk in enumerate(song.ticks) if i and tk["pos"] == (0, 0, 0))
+
+
+def probe_curves(x, bounds, song, n, chan, kind, cut=0.005):
+    """Per tick (the first n) of channel chan: the probe's pitch (rate, bytes
+    per output sample) or level in x, between bounds[k] and bounds[k + 1]
+    (s), cut s off each end; None where the channel is silent."""
+    out = []
+    for k in range(n):
+        o = song.ticks[k]["ch"][chan]
+        a, b = int((bounds[k] + cut) * RATE), int((bounds[k + 1] - cut / 5) * RATE)
+        if not o["sounding"] or b - a < 200 or b > len(x):
+            out.append(None)
+            continue
+        out.append(probe_pitch(x[a:b]) if kind == "pitch" else probe_level(x[a:b], bounds[k + 1] * RATE - a))
+    return out
+
+
+def probe_test(work, no_openmsx):
+    """The probe song (probe_song) in the test ROM in openMSX and in OpenMPT,
+    tick by tick: channel 0's pitch (vibrato) and channel 1's level (tremolo)
+    against the model (the registers it writes; for OpenMPT the period and
+    volume of ProTracker's model), and openMSX against OpenMPT. -> ok."""
+    import numpy as np
+    path = os.path.join(work, "probe.mod")
+    open(path, "wb").write(mod_file(4, *probe_song()))
+    ticks0 = modplay.Player(*modplay.parse(open(path, "rb").read())).run(60)
+    first = next(i for i, tk in enumerate(ticks0) if i and tk["pos"] == (0, 0, 0))
+    pass_s = sum(tk["dur"] for tk in ticks0[:first])
+    song = modplay.Song(path, pass_s + 3, 1.0)
+    n = probe_ticks(song)
+    rom, _, labels = build(song, work, 0)
+    if not no_openmsx:
+        print(f"openMSX: {run_openmsx(rom, work, song, labels):.0f} s")
+    tr = parse_trace(os.path.join(work, "trace.txt"))
+    chk, _ = check_trace(song, tr)
+    fm = tr["fm"]
+    start = chk["start"]
+    clears = [t for t, r, v in fm if r == 4 and v == 0x80 and t > start]
+    xb = [t - tr["rec"] for t in [start] + clears]              # openMSX: the ticks in its recording
+    yb = openmpt_tick_times(song) + [openmpt_tick_times(song)[-1] + song.ticks[-1]["dur"]]
+    data = open(path, "rb").read()
+    rep = dict(ticks=n, trace_ticks_ok=chk["ticks_ok"], trace_start_writes_ok=chk["start_writes_ok"])
+    ok = chk["ticks_ok"] and chk["start_writes_ok"]
+    for chan, kind in ((0, "pitch"), (1, "level")):
+        x = mono(sum(read_wav(os.path.join(work, f"ch{o + 1}.wav"))[1] for o in (chan, chan + 8, chan + 16)))
+        y = mono(read_wav(openmpt(solo_mod(data, chan), f"probe_ch{chan}", work, pass_s + 1))[1])
+        mx, my = probe_curves(x, xb, song, n, chan, kind), probe_curves(y, yb, song, n, chan, kind)
+        rows = []
+        for k in range(n):
+            o = song.ticks[k]["ch"][chan]
+            if mx[k] is None or my[k] is None:
+                continue
+            if kind == "pitch":
+                per = o["per"]
+                want = modplay.pitch_hz(*modplay.pitch_of(per))
+                rows.append((k, per, modplay.PAULA * 4 / (my[k] * RATE), 1200 * math.log2(mx[k] * RATE / want),
+                             1200 * math.log2(mx[k] / my[k])))
+            else:
+                rows.append((k, o["v4"], modplay.level_of(o["v4"], 64), my[k], mx[k]))
+        if kind == "pitch":
+            per_bad = [(k, p, round(q, 2)) for k, p, q, _, _ in rows if abs(q - p) > 0.45]
+            # (OpenMPT keeps the period at or above its Amiga limit, 453 = 113.25 for finetune 0,
+            # where ProTracker and this player play B-3 at 113: known, 3.8 cents)
+            known = [b for b in per_bad if song.ticks[b[0]]["ch"][0]["base"] == 452 and abs(b[2] - b[1] - 1) < 0.05]
+            c_regs = np.array([r[3] for r in rows])
+            c_mpt = np.array([r[4] for r in rows])
+            rep["vibrato_pitch"] = dict(
+                ticks=len(rows), distinct_periods=len({r[1] for r in rows}),
+                openmpt_period_mismatches=len(per_bad), openmpt_mismatch_ticks=per_bad[:8],
+                of_them_b3_amiga_limit=len(known),
+                openmsx_cents_vs_registers=dict(max_abs=round(float(np.abs(c_regs).max()), 3),
+                                                p95_abs=round(float(np.percentile(np.abs(c_regs), 95)), 3)),
+                openmsx_cents_vs_openmpt=dict(min=round(float(c_mpt.min()), 3), max=round(float(c_mpt.max()), 3),
+                                              p95_abs=round(float(np.percentile(np.abs(c_mpt), 95)), 3)))
+            ok = ok and len(known) == len(per_bad) and np.abs(c_regs).max() < 0.5
+        else:
+            ref_y = np.median([r[3] for r in rows if r[1] == 256])
+            ref_x = np.median([r[4] for r in rows if r[2] == 1])
+            lv_bad, d_regs, d_mpt = [], [], []
+            for k, v4, reg, ly, lx in rows:
+                if abs(ly / ref_y * 256 - v4) > 0.6:      # (OpenMPT's ramp over a tick: within 0.6)
+                    lv_bad.append((k, v4, round(ly / ref_y * 256, 2)))
+                g = modplay.tl_gain(reg >> 1) if reg != 0xFF else 0.0
+                if g > 0.004 and lx > 0:                    # above -48 dB
+                    d_regs.append(20 * math.log10(lx / ref_x / g))
+                    d_mpt.append(20 * math.log10(lx / ref_x / (ly / ref_y)))
+                elif g == 0 and lx > 1e-4 * ref_x:
+                    d_regs.append(99.0)
+            d_regs, d_mpt = np.array(d_regs), np.array(d_mpt)
+            rep["tremolo_level"] = dict(
+                ticks=len(rows), distinct_levels=len({r[1] for r in rows}), openmpt_volume_mismatches=len(lv_bad),
+                openmpt_mismatch_ticks=lv_bad[:8],
+                openmsx_db_vs_registers=dict(max_abs=round(float(np.abs(d_regs).max()), 3),
+                                             p95_abs=round(float(np.percentile(np.abs(d_regs), 95)), 3)),
+                openmsx_db_vs_openmpt=dict(min=round(float(d_mpt.min()), 3), max=round(float(d_mpt.max()), 3),
+                                           p95_abs=round(float(np.percentile(np.abs(d_mpt), 95)), 3)))
+            ok = ok and not lv_bad and np.abs(d_regs).max() < 0.1
+        json.dump(rows, open(os.path.join(work, f"probe_{kind}.json"), "w"))
+    print(json.dumps(rep, indent=1, default=str))
+    print("probe: " + ("PASS" if ok else "FAIL"))
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("mod", nargs="?")
@@ -935,13 +1380,36 @@ def main():
     ap.add_argument("--selftest", action="store_true", help="--z80 on MODs made here (every effect)")
     ap.add_argument("--fuzz", type=int, default=12, help="--selftest: this many random MODs too")
     ap.add_argument("--seed", type=int, default=1985)
+    ap.add_argument("--lenient", action="store_true", help="test a MOD the build would refuse (where the ROM "
+                    "player does not play what ProTracker plays, e.g. an instrument swap): the model's view")
+    ap.add_argument("--probe", action="store_true", help="the vibrato / tremolo probe, tick by tick, in "
+                    "openMSX and OpenMPT (no MOD argument)")
+    ap.add_argument("--cost", action="store_true", help="the player's CPU time per tick, in openMSX")
+    ap.add_argument("--loop", action="store_true", help="--rom: a demo ROM whose MOD loops (build_rom.py): "
+                    "the whole song, recorded for --seconds from mod_start (default 230: a pass and more)")
     a = ap.parse_args()
+    if a.loop and a.seconds == 3420 / modplay.music.VBLANK_HZ:
+        a.seconds = 230.0
     work = os.path.abspath(a.work)
     os.makedirs(work, exist_ok=True)
     if a.selftest:
         sys.exit(0 if selftest(os.path.join(work, "self"), a.fuzz, a.seed) else 1)
-    song = modplay.Song(a.mod, a.seconds, a.fade)
+    if a.probe:
+        os.makedirs(os.path.join(work, "probe"), exist_ok=True)
+        sys.exit(0 if probe_test(os.path.join(work, "probe"), a.no_openmsx) else 1)
+    if a.loop:                                      # the model covers the recording (and a bit)
+        song = modplay.Song(a.mod, strict=not a.lenient, loop=True, passes=1)
+        passes = int(a.seconds / song.seconds) + 2
+        song = modplay.Song(a.mod, strict=not a.lenient, loop=True, passes=passes)
+        a.fade = 0.0
+    else:
+        song = modplay.Song(a.mod, a.seconds, a.fade, strict=not a.lenient)
     print(song.summary())
+    for p in song.problems:
+        print("not as ProTracker: " + p[:400])
+    if a.cost:
+        print(json.dumps(cost_test(song, work), indent=1))
+        sys.exit(0)
     if a.z80:
         ok, rep = z80_test(song, work, a.kb, a.gap)
         print(json.dumps(rep, indent=1, default=str))
@@ -958,7 +1426,7 @@ def main():
         rom, b0, labels = build(song, work, a.gap)
         print(f"test ROM {rom}: bank 0 {b0} bytes (module {labels['mp_new2'] + 20 - labels['mod_reset']} bytes)")
     if not a.no_openmsx:
-        wall = (run_openmsx_rom(rom, work, song, labels, a.ext, a.key_at) if a.rom
+        wall = (run_openmsx_rom(rom, work, song, labels, a.ext, a.key_at, a.seconds if a.loop else 0.0) if a.rom
                 else run_openmsx(rom, work, song, labels))
         print(f"openMSX: {wall:.0f} s")
     tr = parse_trace(os.path.join(work, "trace.txt"))
@@ -1002,8 +1470,9 @@ def main():
     x0 = start - tr["rec"]                          # ProTracker time 0 in the recordings (first guess)
     notes = []
     offs = []
+    rpt = 1 + int(span / song.pass_seconds()) if a.loop else 0
     for c in range(song.nch):
-        ref = openmpt(solo_mod(data, c), f"ref_ch{c + 1}", work, span)
+        ref = openmpt(solo_mod(data, c), f"ref_ch{c + 1}", work, span, repeat=rpt)
         _, ym = read_wav(ref)
         xm = sum(read_wav(os.path.join(work, f"ch{o + 1}.wav"))[1] for o in (c, c + 8, c + 16))
         ym, xm = mono(ym), mono(xm)
@@ -1011,9 +1480,9 @@ def main():
         off, cc = align(xm, ym, yt[first[0]], x0 + ideal[first[0]] - yt[first[0]]) if first else (x0, 0)
         off -= ideal[first[0]] - yt[first[0]] if first else 0
         offs.append((off, cc))
-        notes += compare_channel(song, c, xm, ym, off, yt)
+        notes += compare_channel(song, c, xm, ym, off, yt, {(k, ch): late for k, ch, late in kon})
     on = np.array([n["onset_ms"] for n in notes])
-    fade_at = a.seconds - a.fade
+    fade_at = a.seconds - a.fade if not a.loop else a.seconds + 1
     clean = [n for n in notes if n["match"] > 0.9 and n["t"] + 0.3 < fade_at]   # the fade changes levels
     report["audio"] = dict(
         channel_offsets_ms=[round(o * 1e3, 3) for o, _ in offs],
@@ -1026,7 +1495,10 @@ def main():
         med = float(np.median(lv))
         lates = [n["late"] for n in clean if n["late"] and n["t"] + 2.1 < fade_at]
         report["audio"].update(
+            onset_vs_keyon_ms=dict(min=float(min(n["onset_vs_keyon_ms"] for n in notes)),
+                                   max=float(max(n["onset_vs_keyon_ms"] for n in notes))),
             onset_ms=dict(min=float(on.min()), max=float(on.max()), mean=float(on.mean()),
+                          p99=float(np.percentile(on, 99)),
                           abs_max_first_10s=float(np.abs([n["onset_ms"] for n in notes if n["t"] < 10]).max()),
                           abs_max_last_10s=float(np.abs([n["onset_ms"] for n in notes
                                                          if n["t"] > a.seconds - 10]).max())),
@@ -1044,8 +1516,8 @@ def main():
                                          if k != "late"} for n in worst]
 
     # ---- the mix: openMSX against OpenMPT (linear) and the plain OpenMPT render
-    ref_mix = openmpt(data, "ref_mix_linear", work, span)
-    ref_def = openmpt(data, "ref_mix_default", work, span, linear=False)
+    ref_mix = openmpt(data, "ref_mix_linear", work, span, repeat=rpt)
+    ref_def = openmpt(data, "ref_mix_default", work, span, linear=False, repeat=rpt)
     _, ym = read_wav(ref_mix)
     _, yd = read_wav(ref_def)
     _, xm = read_wav(os.path.join(work, "mix.wav"))
@@ -1072,10 +1544,11 @@ def main():
         report["mix"] = dict(sides=blk, lag_ms_every_2s=dict(n=len(lg), min=float(lg.min()), max=float(lg.max()),
                                                              first=float(lg[0]), last=float(lg[-1])))
         report["mix_lags"] = [(s, round(lag, 3), round(cc, 3)) for s, lag, cc in lags]
-        tail = xm[xs + int(a.seconds * RATE) + int(0.05 * RATE):]
-        report["mix"]["after_end_peak"] = float(np.abs(tail).max()) if len(tail) else None
-        fade = xm[xs + int((a.seconds - a.fade) * RATE):xs + int(a.seconds * RATE)]
-        report["mix"]["fade_db_per_s"] = [round(float(v), 1) for v in frames_db(fade.mean(axis=1), RATE // 2)]
+        if not a.loop:
+            tail = xm[xs + int(a.seconds * RATE) + int(0.05 * RATE):]
+            report["mix"]["after_end_peak"] = float(np.abs(tail).max()) if len(tail) else None
+            fade = xm[xs + int((a.seconds - a.fade) * RATE):xs + int(a.seconds * RATE)]
+            report["mix"]["fade_db_per_s"] = [round(float(v), 1) for v in frames_db(fade.mean(axis=1), RATE // 2)]
         m2 = min(n, len(yd))
         x_, l_, d_ = xm[xs:xs + m2].mean(axis=1), ym[:m2].mean(axis=1), yd[:m2].mean(axis=1)
         report["spectrum"] = dict(vs_openmpt_linear=bands_db(x_, l_), vs_openmpt_default=bands_db(x_, d_),
@@ -1088,8 +1561,9 @@ def main():
         shutil.copy(os.path.join(work, "mix.wav"),
                     os.path.join(a.preview, f"crawl_music_MOD_MoonSound-wave{sfx}.wav" if a.rom
                                  else f"modplay_openmsx_moonsound_wave_first57s{sfx}.wav"))
-        shutil.copy(ref_mix, os.path.join(a.preview, "modplay_openmpt_reference_amiga-pan_linear_first57s.wav"))
-        shutil.copy(ref_def, os.path.join(a.preview, "modplay_openmpt_reference_default_first57s.wav"))
+        span_tag = "fullsong" if a.loop else "first57s"
+        shutil.copy(ref_mix, os.path.join(a.preview, f"modplay_openmpt_reference_amiga-pan_linear_{span_tag}.wav"))
+        shutil.copy(ref_def, os.path.join(a.preview, f"modplay_openmpt_reference_default_{span_tag}.wav"))
         print("preview:", a.preview)
 
 

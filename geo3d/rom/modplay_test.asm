@@ -14,10 +14,13 @@
 ;   t_blocks  128 KB blocks of sample RAM found
 ; T_GAP (rom_test.asm): busy loop between polls, rounds of 38 T (10.7 us at
 ; 3.58 MHz; 0: poll all the time), to see that a sparse poll delays the
-; notes a little but does not make the song drift.
+; notes a little but does not make the song drift. T_MODE: 0 polls with
+; mod_poll (a host that waits), 1 with mod_tpoll (a busy host: each tick's
+; whole work when it is due; modcost.py measures both). T_RB: mp_restbank
+; takes as long as the demo ROM's (modcost.py).
 ; ============================================================================
 
-        include "rom_test.asm"      ; T_GAP
+        include "rom_test.asm"      ; T_GAP, T_MODE, T_RB
 
 ENASLT:     equ 0x0024
 RSLREG:     equ 0x0138
@@ -72,7 +75,12 @@ init:
         ld a, 2
         ld (t_phase), a
         call mod_start
-t_loop: call mod_poll
+t_loop:
+        if T_MODE
+        call mod_tpoll
+        else
+        call mod_poll
+        endif
         ld a, (mp_on)
         or a
         jr z, t_end
@@ -93,6 +101,11 @@ mp_setbank:
         ld (0x7000), a              ; ASCII16: bank at 8000h-BFFFh
         ret
 mp_restbank:
+        if T_RB
+        ld a, (t_slot)              ; (modcost.py: as long as the demo ROM's,
+        jr t_rb1                    ; which maps its stream's bank back)
+t_rb1:  ld (0x7000), a
+        endif
         ret                         ; no stream of our own in page 2
 
         include "rom_mod.asm"

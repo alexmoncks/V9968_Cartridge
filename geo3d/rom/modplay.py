@@ -12,17 +12,23 @@ stream: this file only decides which part of the MOD goes in the ROM, makes
 the OPL4 lookup tables, and models the Z80 player exactly so the tests can
 check it.
 
-  trim    the part of the MOD the ROM plays (the crawl's 57 s): the positions
-          reached (song length cut there), the patterns up to the highest
-          they use, the samples they name (the others: length 0, no data).
-          The file's own bytes otherwise. The ProTracker model below must play
-          it exactly as it plays the whole file, or the build stops.
+  trim    the part of the MOD the ROM plays (the demo ROM: the whole song,
+          looping; the test ROM: its first seconds): the positions reached
+          (song length cut there), the patterns up to the highest they use,
+          the samples they name (the others: length 0, no data). The file's
+          own bytes otherwise. The ProTracker model below must play it
+          exactly as it plays the whole file (a looping song: over 3 passes,
+          so the second and third start with what the first left in the
+          channels), or the build stops.
   tables  period -> OPL4 pitch (4096 entries), BPM -> timer 2 period, volume
-          and fade -> OPL4 level, ProTracker's period tables.
+          played (1/4 units) and fade -> OPL4 level, ProTracker's period
+          tables, the vibrato / tremolo waveforms.
   Rt      what the Z80 does with a MOD, byte for byte: the MOD header as it
           parses it, the sample RAM it fills (tone headers it computes, the
-          samples as they are in the file), the 9xx start offsets it finds by
-          scanning the patterns, and every wave register write of every tick.
+          samples as they are in the file), the 9xx start offsets that need
+          a tone of their own (found here by scanning the patterns; the ROM
+          holds the list, after the tables: tt_bytes), and every wave
+          register write of every tick.
 
 The ProTracker model (Player) follows ProTracker 2 as OpenMPT plays an M.K.
 file in its ProTracker mode, the reference the test measures against:
@@ -30,24 +36,66 @@ periods in 1/4 units from ProTracker's finetune tables, the tempo (Fxx >=
 20h) from the tick after the one that reads it, the sample properties of an
 instrument number loaded on tick 0 even with a note delay, the 9xx offset
 that stacks on notes without an instrument number, the out-of-range note
-delay whose pitch shows on the next row. Effects: 0 arpeggio, 1/2 porta, 3
-tone porta, 5 porta + slide, 9 offset, A slide, B jump, C volume, D break,
-E1/E2 fine porta, E5 finetune, E6 loop, E9 retrigger, EA/EB fine slides, EC
-cut, ED delay, EE row delay, F speed / tempo. Not played: 4/6 vibrato and 7
-tremolo (rejected with an error), E0/E3/E4/E7/E8/EF (ignored), 8 panning
-(the Amiga pans hard: channels 0 and 3 left, 1 and 2 right). The ROM player
-does not follow a sample's play position (the OPL4 plays the sample), so it
-has no instrument swap (an instrument number without a note while a sample
-loops, heard at the loop end in ProTracker); Player(track=False) models
-that, and the build stops if the song needs it within what the ROM plays.
+delay whose pitch shows on the next row; and ProTracker 2's rules (pt2-clone)
+where a review found them to matter, checked against OpenMPT: the last
+EEx of a row counts; a jump or a break after a row delay skips its target
+row; a Bxx clears the row of a Dxx before it; past the song's end the
+song goes on at position 0, on the row a Dxx gave (its restart: it loops);
+EDx and E9x without a note play again on each EEx repeat; 9xx without a
+note moves the stacked offset; E5x without a note sets the finetune; E9x
+with a lone instrument number retriggers that sample (at the finetune the
+row started with); a lone empty sample sets its volume. Four more cases
+follow ProTracker 2 where OpenMPT (the audio test's reference) plays them
+otherwise, and the build takes them: an arpeggio on a period that a slide
+left between two notes plays that period on its base step (OpenMPT the
+note's); an arpeggio's 0 / x / y steps start again on each EEx repeat of
+its row (OpenMPT goes on counting); ECx with x at or past the speed never
+cuts on a row with EEx (OpenMPT counts the ticks across the repeats); an
+Fxx tempo on a row with EEx takes effect from its second tick, the first
+repeat at speed 1 (OpenMPT from the next row, so its later notes come
+earlier or later by up to a tick's difference). Effects: 0
+arpeggio, 1/2 porta, 3 tone porta, 4 vibrato, 5 porta + slide, 6 vibrato
++ slide, 7 tremolo, 9 offset, A slide, B jump, C volume, D break, E1/E2
+fine porta, E4 vibrato waveform, E5 finetune, E6 loop, E7 tremolo
+waveform, E9 retrigger, EA/EB fine slides, EC cut, ED delay, EE row delay,
+F speed / tempo. Not played: E0/E8 (ignored), E3x glissando and EFx (the
+build stops if a song uses them), 8 panning (the Amiga pans hard: channels
+0 and 3 left, 1 and 2 right). The ROM player does not follow a sample's
+play position (the OPL4 plays the sample), so it has no instrument swap
+(an instrument number without a note while a sample loops, heard at the
+loop end in ProTracker) and does not start the sample of a lone instrument
+number on a channel whose one-shot ran out (ProTracker plays its loop);
+Player(track=False) models that, and the build stops if the song needs
+it within what the ROM plays. It also stops for what ProTracker and OpenMPT
+play differently: an E6x loop on a row with EEx, or with Bxx / Dxx; a
+sample looped from 0 on a loop shorter than itself (ProTracker plays it
+whole first).
+
+Vibrato and tremolo as OpenMPT plays them in a MOD (ProcessVibrato,
+ProcessTremolo): 4xy / 7xy keep x (speed) and y (depth) unless 0, 6xy is
+vibrato with its memory plus the volume slide xy; a position 0..63 moves on
+by the speed on every tick but a row's first (and its EEx repeats), which
+play the plain period and volume; the waveform (E4x / E7x, x & 3: sine,
+ramp down, square, random: OpenMPT's 64-entry tables, MOD_SINE and
+MOD_RANDOM) at the position times the depth adds depth * w / 16 to the
+period in 1/4 units (the ramp upside down, as FastTracker 2), or depth * w
+/ 8 to the volume in 1/4 units (0..256; not at volume 0, and only while a
+sample plays), both truncated towards 0. The tremolo's ramp is ProTracker's
+(it turns over with the vibrato position's half). A note (a trigger:
+retrigger and note delay too, tone portamento only when nothing sounds)
+sets both positions to 0 unless E4x / E7x has bit 2 (x + 4); E4x / E7x on a
+note's row takes effect after it. ProTracker and this model play B-3 of
+finetune 0 at period 113 where OpenMPT keeps it at its Amiga limit (453 in
+1/4 units, 3.8 cents higher).
 
 OPL4 mapping (geo3d_modplay.asm):
   pitch   the chip plays 44100 * (1024 + FN) / 1024 * 2^(OCT - 1) samples
           per second; OCT and FN are the nearest to PAULA / period
           (register 38h = OCT << 4 | FN >> 7, 20h = FN << 1 | 1 (tone bit 8)).
   level   register 50h = TL << 1 | 1 (level direct): TL = the TL whose gain
-          (0.375 dB steps, linear within each 6 dB) is nearest to volume /
-          64, plus the fade's attenuation.
+          (0.375 dB steps, linear within each 6 dB) is nearest to the volume
+          played / 256 (4 * volume, or the tremolo's), plus the fade's
+          attenuation.
   key     68h = A0h | pan on, 20h | pan off (bit 5: LFO off); pan 9 is left
           only, 7 right only.
   timing  the OPL4's FM timer 2 (323.13 us steps) set to the tick length,
@@ -62,7 +110,7 @@ OPL4 mapping (geo3d_modplay.asm):
           tone header, 0.3 ms): a note's tick only keys it on.
   tones   headers of tones 384-511 at 200000h (register 2 = 10h): tone 384 +
           s - 1 is sample s from its start, the next ones the 9xx start
-          offsets the scan found. A looped sample loops from its loop start
+          offsets the scan found (Rt.scan, at build time: MP_T_TT). A looped sample loops from its loop start
           to its loop end; a one-shot ends on 2 zero bytes after its data.
 
 The MOD itself is an input: music you do not own stays out of the
@@ -154,6 +202,59 @@ def pattern_note(per):
     return NOTE_C1 + len(PT_TABLE) - 1
 
 
+# -------------------------------------------------------- vibrato, tremolo
+MOD_SINE = [0, 12, 25, 37, 49, 60, 71, 81, 90, 98, 106, 112, 117, 122, 125, 126]    # OpenMPT's
+MOD_SINE = MOD_SINE + [127] + MOD_SINE[:0:-1]                                     # ModSinusTable
+MOD_SINE = MOD_SINE + [-v for v in MOD_SINE]
+MOD_RANDOM = [98, -127, -43, 88, 102, 41, -65, -94, 125, 20, -71, -86, -70, -32, -16, -96,     # and its
+              17, 72, 107, -5, 116, -69, -62, -40, 10, -61, 65, 109, -18, -38, -13, -76,   # ModRandomTable
+              -23, 88, 21, -94, 8, 106, 21, -112, 6, 109, 20, -88, -30, 9, -127, 118,
+              42, -34, 89, -4, -51, -72, 21, -29, 112, 123, 84, -101, -92, 98, -54, -95]
+
+
+def wave(kind, pos):
+    """The waveform of E4x / E7x (kind & 3: sine, ramp down, square, random) at
+    position pos (0..63), -127..127, as OpenMPT has them (GetVibratoDelta)."""
+    k = kind & 3
+    if k == 0:
+        return MOD_SINE[pos]
+    if k == 1:
+        return (0 if pos < 32 else 255) - 4 * pos
+    if k == 2:
+        return 127 if pos < 32 else -127
+    return MOD_RANDOM[pos]
+
+
+def cdiv(a, b):
+    """a / b, truncated towards 0 (C)."""
+    q = abs(a) // b
+    return q if a >= 0 else -q
+
+
+def vib_delta(kind, pos, depth):
+    """What vibrato adds to the period (1/4 units) at this position: OpenMPT's
+    ProcessVibrato for a MOD, depth y (4xy) * 4 >> 6 of the waveform, the ramp
+    upside down (as FastTracker 2), so period + delta goes down in pitch first."""
+    w = wave(kind, pos)
+    if kind & 3 == 1:
+        w = -w
+    return -cdiv(-w * 4 * depth, 64)
+
+
+def trem_delta(kind, pos, vpos, depth):
+    """What tremolo adds to the volume (1/4 units, 0..256) at this position:
+    OpenMPT's ProcessTremolo for a MOD, depth y * 4 >> 5 of the waveform; its
+    ramp down is ProTracker's, which looks at the vibrato position vpos."""
+    if kind & 3 == 1:
+        r = (pos * 4) & 0x7F
+        if vpos >= 32:
+            r ^= 0x7F
+        w = -r if pos >= 32 else r
+    else:
+        w = wave(kind, pos)
+    return cdiv(w * 4 * depth, 32)
+
+
 # ------------------------------------------------------------------ player
 class Chan:
     def __init__(self):
@@ -173,6 +274,10 @@ class Chan:
         self.late = None         # out-of-range note delay: the note (heard on the next row)
         self.loop_row = 0
         self.loop_n = 0
+        self.rft = 0             # finetune of this row's retriggers (E9x)
+        self.gliss = 0           # E3x (glissando: not played, the build refuses it with 3xx / 5xy)
+        self.vspd = self.vdep = self.vpos = self.vtype = 0     # vibrato: memory, position 0..63, E4x
+        self.tspd = self.tdep = self.tpos = self.ttype = 0     # tremolo: the same, E7x
 
 
 class Player:
@@ -182,18 +287,24 @@ class Player:
 
     def __init__(self, smps, order, pats, nch, track=True):
         self.smps, self.order, self.pats, self.nch, self.track = smps, order, pats, nch, track
+        self.unplayable = {}                        # what the ROM player does not play: first (order, row)
 
-    def trigger(self, ch, s, note, pos, out):
-        """(Re)starts sample s at position pos (bytes): the event of this tick."""
+    def trigger(self, ch, s, note, pos, out, ft=None):
+        """(Re)starts sample s at position pos (bytes): the event of this tick
+        (its period from the channel's finetune, or ft)."""
         if not 0 < s < len(self.smps):
             return
         smp = self.smps[s]
         ch.cur, ch.note = s, note
+        if ch.vtype < 4:                            # a note restarts the waveforms (E4x / E7x
+            ch.vpos = 0                             # below 4), an empty sample's too
+        if ch.ttype < 4:
+            ch.tpos = 0
         if not smp["data"]:
             ch.play = None                          # an empty sample: the channel stops
             out["stop"] = True
             return
-        ch.per = period_of_note(note, ch.ft)
+        ch.per = period_of_note(note, ch.ft if ft is None else ft)
         loop = smp["loop"]
         end = loop[0] + loop[1] if loop else len(smp["data"])
         pos = min(pos, end - 1)
@@ -202,19 +313,33 @@ class Player:
         out["trig"] = (s, pos)
         out.pop("stop", None)
 
-    def run(self, seconds, max_ticks=10 ** 6):
-        """Plays from order 0 for `seconds`. Returns the ticks: dict(t, dur,
-        bpm, speed, pos=(order, row, tick), ch=[per channel dict(per (1/4
-        period played, arpeggio included), vol, trig=(sample, byte offset)
-        or None, swap=(sample, t) or None, stop, sounding)])."""
+    def run(self, seconds, max_ticks=10 ** 6, passes=None):
+        """Plays from order 0 for `seconds` (or `passes` whole passes of the
+        song). Returns the ticks: dict(t, dur, bpm, speed, pos=(order, row,
+        tick), ch=[per channel dict(per (1/4 period played, arpeggio or
+        vibrato included), base (the channel's period), vol, v4 (volume
+        played, 1/4 units: 4 * vol or the tremolo's), trig=(sample, byte
+        offset) or None, swap=(sample, t) or None, stop, sounding)]).
+        self.pass_starts: the tick where each pass of the song starts: 0,
+        then each time the song gets back to a row it played in this pass
+        through a jump, a break or its end (not an E6x loop)."""
         nch = self.nch
         chans = [Chan() for _ in range(nch)]
         speed, bpm = 6, 125
         oi, row, t = 0, 0, 0.0
         ticks = []
+        self.pass_starts, seen, moved = [0], set(), False
         while t < seconds and len(ticks) < max_ticks:
             if oi >= len(self.order):
-                oi, row = 0, 0                     # the end of the song: it starts over
+                oi = 0                              # the end of the song: it starts over at
+                moved = True                        # position 0, on the row a Dxx gave (ProTracker)
+            if moved and (oi, row) in seen:         # the song came back: a new pass
+                self.pass_starts.append(len(ticks))
+                seen = set()
+                if passes is not None and len(self.pass_starts) > passes:
+                    break                           # (that pass is not played)
+            seen.add((oi, row))
+            moved = False
             cells = self.pats[self.order[oi]][row]
             jump = brk = tempo = None
             pdelay = None
@@ -229,15 +354,21 @@ class Player:
                         tempo = x
                 elif e == 0xB:
                     jump = x
+                    brk = None                      # ProTracker: Bxx clears a break row before it
                 elif e == 0xD:
                     brk = (x >> 4) * 10 + (x & 15)
                     if brk > 63:
                         brk = 0
-                elif e == 0xE and x >> 4 == 0xE and pdelay is None:
-                    pdelay = x & 15
-                elif e in (4, 6, 7):
-                    raise ValueError(f"effect {e:X}{x:02X} at order {oi} row {row}: vibrato / tremolo not supported")
+                elif e == 0xE and x >> 4 == 0xE:
+                    pdelay = x & 15                 # (the last EEx of the row)
             pdelay = pdelay or 0
+            if any(e == 0xE and x >> 4 == 6 and x & 15 for s, per, e, x in cells):
+                # an E6x loop with a row delay, or with a jump or break: ProTracker runs it on
+                # each repeat and shares the break row with it (and OpenMPT differs again)
+                if pdelay and "E6x+EEx" not in self.unplayable:
+                    self.unplayable["E6x+EEx"] = f"E6x with EEx at order {oi} row {row}"
+                if (jump is not None or brk is not None) and "E6x+B/D" not in self.unplayable:
+                    self.unplayable["E6x+B/D"] = f"E6x with Bxx or Dxx at order {oi} row {row}"
             for c, (s, per, e, x) in enumerate(cells):   # a note of an out-of-range delay shows now
                 ch = chans[c]
                 if ch.late is not None and not per:
@@ -255,7 +386,9 @@ class Player:
                 for c, ch in enumerate(chans):
                     o = outs[c]
                     o["vol"] = ch.vol
+                    o.setdefault("v4", 4 * ch.vol)
                     o.setdefault("per", ch.per)
+                    o["base"] = ch.per
                     o["sounding"] = ch.play is not None
                     o.setdefault("trig", None)
                     if self.track:
@@ -271,6 +404,11 @@ class Player:
                 else:
                     oi += 1
                 row = brk if brk is not None else 0
+                if pdelay:                          # ProTracker: after a row delay the target
+                    row += 1                        # row itself is skipped
+                    if row == 64:
+                        row, oi = 0, oi + 1
+                moved = True
             elif loop_to is not None:
                 row = loop_to
             else:
@@ -285,23 +423,39 @@ class Player:
         porta = e in (3, 5)
         if k == 0:
             delay = e == 0xE and hi == 0xD and lo > 0
+            ch.delay = None                         # (a note delay plays on every repeat of EEx)
+            old_ft = ch.ft
             if s:
                 smp = self.smps[s] if s < len(self.smps) else None
-                if smp and smp["data"]:
-                    ch.vol = smp["vol"]
                 if smp:
+                    ch.vol = smp["vol"]             # (an empty sample's too)
                     ch.ft = smp["ft"] & 15
                 ch.stack = 0                        # an instrument number resets the stacked offset
                 if ch.play and (porta or not per or delay):
                     ch.swap = s if ch.play["smp"] != s else 0   # ProTracker: swapped in at the loop end
+                elif (self.track and ch.play is None and not per and smp and smp["data"] and smp["loop"]
+                      and ch.cur and ch.per):
+                    # ProTracker: the channel's one-shot ran out, and Paula plays this sample's
+                    # loop from here (OpenMPT: the sample, from its start): the ROM player can not
+                    # (it does not know that the one-shot ended): the build refuses it
+                    self.trigger(ch, s, ch.note, 0, out)
                 ch.sel = s
             if e == 9:
                 if x:
                     ch.offset = x
+                if not per:                         # ProTracker: 9xx without a note moves the
+                    ch.stack += ch.offset * 256     # stacked offset all the same
+            if e == 0xE and hi == 5:
+                ch.ft = lo                          # E5x: with or without a note
+            ch.rft = old_ft if s and not per else ch.ft     # a retrigger with a lone instrument
+            if e == 0xE and hi == 3:                        # number: its sample, the pitch as it was
+                ch.gliss = lo
+            if ch.gliss and porta and "E3x" not in self.unplayable:
+                self.unplayable["E3x"] = f"E3{ch.gliss:X} (glissando) with {e:X}xx at row {row}"
+            if e == 0xE and hi == 0xF and lo and "EFx" not in self.unplayable:
+                self.unplayable["EFx"] = f"EF{lo:X} (funk repeat) at row {row}"
             if per:
                 note = pattern_note(per)
-                if e == 0xE and hi == 5:
-                    ch.ft = lo
                 if porta:
                     q = period_of_note(note, ch.ft)
                     ch.dest = q
@@ -325,6 +479,11 @@ class Player:
                     self.trigger(ch, ch.sel, note, pos, out)
             if e == 3 and x:
                 ch.pspeed = x
+            elif e == 4 or e == 7:                  # vibrato / tremolo memory: speed x, depth y
+                if e == 4:
+                    ch.vspd, ch.vdep = hi or ch.vspd, lo or ch.vdep
+                else:
+                    ch.tspd, ch.tdep = hi or ch.tspd, lo or ch.tdep
         if tr == 0:                                 # first tick of the row (and of its EEx repeats)
             if e == 0xC:
                 ch.vol = min(x, 64)
@@ -339,8 +498,12 @@ class Player:
                     ch.vol = max(0, ch.vol - lo)
                 elif hi == 0xC and lo == 0:
                     ch.vol = 0
-                elif hi == 9 and lo and not per and k == 0:
-                    self.retrig(ch, out)
+                elif hi == 4:
+                    ch.vtype = lo & 7               # E4x / E7x: the waveform (+4: a note does not
+                elif hi == 7:                       # restart it), after this row's note
+                    ch.ttype = lo & 7
+                elif hi == 9 and lo and not per:
+                    self.retrig(ch, out, s)
                 elif hi == 6 and k == 0:
                     if lo == 0:
                         ch.loop_row = row
@@ -365,17 +528,23 @@ class Player:
                     ch.per = max(ch.dest, ch.per - d)
                 if ch.per == ch.dest:
                     ch.dest = 0                     # ProTracker: target reached, portamento off
-            if e in (5, 0xA):
+            if e in (5, 6, 0xA):
                 ch.vol = min(64, ch.vol + hi) if hi else max(0, ch.vol - lo)
             if e == 0xE:
                 if hi == 9 and lo and tr % lo == 0:
-                    self.retrig(ch, out)
+                    self.retrig(ch, out, s)
                 elif hi == 0xC and tr == lo:
                     ch.vol = 0
                 elif hi == 0xD and ch.delay and tr == ch.delay[0]:
-                    note = ch.delay[1]
-                    ch.delay = None
-                    self.trigger(ch, ch.sel, note, ch.stack, out)
+                    self.trigger(ch, ch.sel, ch.delay[1], ch.stack, out)
+            elif e == 4 or e == 6:                  # vibrato: the period played; the position
+                if ch.per:                          # moves on even without one
+                    out["per"] = ch.per + vib_delta(ch.vtype, ch.vpos, ch.vdep)
+                ch.vpos = (ch.vpos + ch.vspd) & 63
+            elif e == 7 and ch.play is not None:    # tremolo, while a sample plays: the volume
+                if ch.vol:                          # played (1/4 units), not at volume 0
+                    out["v4"] = max(0, min(256, 4 * ch.vol + trem_delta(ch.ttype, ch.tpos, ch.vpos, ch.tdep)))
+                ch.tpos = (ch.tpos + ch.tspd) & 63
         if e == 0 and x and ch.per:                 # arpeggio: the played period only
             n = note_of_period(ch.per, ch.ft) + (0, hi, lo)[tr % 3]
             if tr % 3:
@@ -385,9 +554,12 @@ class Player:
                     out["per"] = period_of_note(n - 37 if n > 84 else n, ch.ft)
         return loop_to
 
-    def retrig(self, ch, out):
-        if ch.cur and ch.note:                      # the last note again, from its start
-            self.trigger(ch, ch.cur, ch.note, ch.stack, out)
+    def retrig(self, ch, out, s=0):
+        """The last note again, from its start: its sample, or the row's lone
+        instrument number's (ProTracker plays the sample it loaded), at the
+        finetune of the row's start."""
+        if ch.cur and ch.note:
+            self.trigger(ch, s or ch.cur, ch.note, ch.stack, out, ch.rft)
 
     def advance(self, ch, o, t, dur):
         """Moves the sounding sample through this tick: a one-shot runs out,
@@ -434,12 +606,17 @@ def parse(data):
     return music._mod_parse(data)
 
 
-def events(ticks):
+def events(ticks, heard=None):
     """What a tick plays, for comparing two players: position, tempo, and
-    per channel the period, volume, (re)start, stop and sample swap."""
+    per channel the period, volume, volume played (tremolo), (re)start, stop
+    and sample swap. heard: per tick and channel, whether a sample sounds
+    (the reference player's o["sounding"]); where none does, the volume
+    played is left out: ProTracker's tremolo stops there, the ROM player's
+    (which does not know that a one-shot ran out) goes on, unheard."""
     return [(tk["pos"], tk["bpm"], tk["speed"],
-             tuple((o["per"], o["vol"], o["trig"], bool(o.get("stop")), o["swap"] and o["swap"][0])
-                   for o in tk["ch"])) for tk in ticks]
+             tuple((o["per"], o["vol"], o["v4"] if heard is None or heard[i][c] else None, o["trig"],
+                    bool(o.get("stop")), o["swap"] and o["swap"][0])
+                   for c, o in enumerate(tk["ch"]))) for i, tk in enumerate(ticks)]
 
 
 # -------------------------------------------------------------------- trim
@@ -533,13 +710,15 @@ def level_reg(g):
     return (tl << 1) | 1
 
 
-VOL_TL = [level_reg(v / 64) >> 1 for v in range(65)]            # TL of each MOD volume
+VOL_TL = [level_reg(v / 256) >> 1 for v in range(257)]          # TL of each volume played, 1/4 units
 FADE_TL = [127] + [min(127, round(-20 * math.log10(g / 64) / 0.375)) for g in range(1, 65)]
 
 
-def level_of(vol, g64):
-    """Register 50h: the volume's TL plus the fade's (g64 = 64: no fade)."""
-    tl = VOL_TL[vol] + FADE_TL[g64]
+def level_of(v4, g64):
+    """Register 50h for the volume played (v4: 1/4 units, 0..256; tremolo
+    moves it in 1/4 steps, as OpenMPT): its TL plus the fade's (g64 = 64: no
+    fade)."""
+    tl = VOL_TL[v4] + FADE_TL[g64]
     return 0xFF if tl >= 127 else (tl << 1) | 1
 
 
@@ -571,12 +750,15 @@ def pitch_of(q):
 TAB_PITCH = 0x0000          # 4096 x (38h, 20h), by 1/4 period
 TAB_P64K = 0x2000           # (38h, 20h) of the period 65536
 TAB_BPM = 0x2002            # 256 x (whole, fraction lo, hi): timer 2 per tick (BPM >= 32)
-TAB_VOLTL = TAB_BPM + 768   # 65: TL of each volume
-TAB_FADETL = TAB_VOLTL + 65  # 65: the fade's TL, by g64 = 0..64
+TAB_VOLTL = TAB_BPM + 768   # 257: TL of each volume played (1/4 units)
+TAB_FADETL = TAB_VOLTL + 257  # 65: the fade's TL, by g64 = 0..64
 TAB_PT = TAB_FADETL + 65    # 36 words: ProTracker's periods C-1..B-3
 TAB_OCT = TAB_PT + 72       # 84 words: PT_OCTAVES
 TAB_TUNED = TAB_OCT + 168   # 16 x 12 words: TUNED
-TAB_LEN = TAB_TUNED + 384
+TAB_SINE = TAB_TUNED + 384  # 32: MOD_SINE's first half (the second is its negative)
+TAB_RANDOM = TAB_SINE + 32  # 64: MOD_RANDOM (signed bytes)
+TAB_LEN = TAB_RANDOM + 64
+TAB_TT = TAB_LEN            # then the MOD's 9xx tones (Rt.tt_bytes): sample, start (2) each
 
 
 def tables():
@@ -590,6 +772,7 @@ def tables():
     out += bytes(VOL_TL) + bytes(FADE_TL)
     for p in PT_TABLE + PT_OCTAVES + [x for row in TUNED for x in row]:
         out += bytes([p & 0xFF, p >> 8])
+    out += bytes(MOD_SINE[:32]) + bytes(v & 0xFF for v in MOD_RANDOM)
     assert len(out) == TAB_LEN
     return bytes(out)
 
@@ -598,7 +781,8 @@ def tab_equ():
     return "\n".join(f"{n}: equ 0x{v:04x}" for n, v in (
         ("MP_T_PITCH", TAB_PITCH), ("MP_T_P64K", TAB_P64K), ("MP_T_BPM", TAB_BPM),
         ("MP_T_VOLTL", TAB_VOLTL), ("MP_T_FADETL", TAB_FADETL), ("MP_T_PT", TAB_PT),
-        ("MP_T_OCT", TAB_OCT), ("MP_T_TUNED", TAB_TUNED))) + "\n"
+        ("MP_T_OCT", TAB_OCT), ("MP_T_TUNED", TAB_TUNED), ("MP_T_SINE", TAB_SINE),
+        ("MP_T_RANDOM", TAB_RANDOM), ("MP_T_TT", TAB_TT))) + "\n"
 
 
 # ------------------------------------------------------------ the Z80's view
@@ -615,8 +799,9 @@ def z80_channels(data):
 
 class Rt:
     """geo3d_modplay.asm with the MOD `data` (the ROM's copy), byte for byte:
-    the header as it parses it, the sample RAM it writes, the 9xx tones its
-    scan finds, and (schedule) the wave register writes of every tick."""
+    the header as it parses it, the sample RAM it writes, the 9xx tones (the
+    scan here; the ROM holds its list: tt_bytes), and (schedule) the wave
+    register writes of every tick."""
 
     def __init__(self, data):
         self.data = data
@@ -685,6 +870,8 @@ class Rt:
                         ch[0], ch[1] = s, 0
                     if e == 9 and x:
                         ch[2] = x
+                    if e == 9 and not per:          # (9xx without a note: the stack moves)
+                        ch[1] = min(0xFFFF, ch[1] + ch[2] * 256)
                     if per:
                         if e in (3, 5):
                             pos = 0 if s else ch[1]
@@ -696,6 +883,11 @@ class Rt:
                         add(ch[0], pos)
                     elif e == 0xE and x >> 4 == 9 and x & 15:
                         add(ch[0], ch[1])
+
+    def tt_bytes(self):
+        """The 9xx tones (tone 384 + 31 on) for the ROM: sample, start (low,
+        high) each, as mod_upload_init copies them to mp_tt."""
+        return b"".join(bytes([s, pos & 0xFF, pos >> 8]) for s, pos in self.keys[31:])
 
     def tone(self, s, pos):
         """The tone index (tone 384 + index) of sample s from byte pos."""
@@ -754,7 +946,7 @@ class Rt:
         n_end = None
         for i, tk in enumerate(ticks):
             g64 = 64
-            if t >= fade0:
+            if fade0 is not None and t >= fade0:
                 while t - fade0 - fb >= fstep:
                     fb += fstep
                     fq += 1
@@ -768,7 +960,7 @@ class Rt:
                 break
             on, off, upd, prep = [], [], [], []
             for c, o in enumerate(tk["ch"]):
-                lvl = level_of(o["vol"], g64)
+                lvl = level_of(o["v4"], g64)
                 if o.get("stop"):
                     if keyed[c]:
                         off.append((0x68 + c + 8 * cur[c], KEY_OFF | pans[c]))
@@ -801,7 +993,9 @@ class Rt:
             preps.append(prep)
             t += counts[-1]
         if n_end is None:
-            raise ValueError("the ticks end before the fade does")
+            if fade0 is not None:
+                raise ValueError("the ticks end before the fade does")
+            n_end = len(ticks)                      # a song that loops: no END (alloff: never played)
         writes = [heads[i] + (preps[i + 1] if i + 1 < n_end else []) for i in range(n_end)] + [alloff]
         return start + preps[0], writes, [len(h) for h in heads] + [len(alloff)], counts
 
@@ -825,23 +1019,54 @@ class Song:
     (ticks, until the END), the sample RAM image it uploads and the writes
     it makes, and the checks that it plays what ProTracker plays."""
 
-    def __init__(self, path, seconds, fade=3.0, strict=True):
+    def __init__(self, path, seconds=None, fade=3.0, strict=True, loop=False, passes=3, min_seconds=0):
         """strict: stop (ValueError) where the ROM player would not play what
         ProTracker plays; else note it in self.problems (tests of the player
-        against its model)."""
+        against its model). loop: the whole song, over and over (ProTracker's
+        restart at its end), no fade: the ROM holds every position the song
+        reaches and the model covers `passes` passes of it, and more if they
+        take less than min_seconds (seconds and fade are not used); else
+        `seconds` of it from its start, the last `fade` seconds fading out,
+        then the END."""
         orig = open(path, "rb").read()
-        self.path, self.seconds, self.fade = path, seconds, fade
-        self.fade0 = round((seconds - fade) / T2_UNIT)
-        self.fstep = max(1, round(fade / T2_UNIT / 64))
+        self.path, self.fade, self.loop = path, fade, loop
         self.problems = []
-        ref = Player(*parse(orig)).run(seconds + 2)
-        n = end_tick(ref, self.fade0, self.fstep)
+        pl = Player(*parse(orig))
+        if loop:
+            self.fade0 = self.fstep = None
+            ref = pl.run(1e9, max_ticks=10 ** 6, passes=passes)
+            if ref and ref[-1]["t"] + ref[-1]["dur"] < min_seconds and len(pl.pass_starts) > passes:
+                a, b = pl.pass_starts[-2], pl.pass_starts[-1]
+                t = [tk["t"] for tk in ref] + [ref[-1]["t"] + ref[-1]["dur"]]
+                passes += math.ceil((min_seconds - t[-1]) / max(1e-3, t[b] - t[a]))
+                pl = Player(*parse(orig))
+                ref = pl.run(1e9, max_ticks=10 ** 6, passes=passes)
+            n = len(ref)
+            self.pass_starts = pl.pass_starts
+            if len(self.pass_starts) <= passes:
+                raise ValueError(f"the song does not come back to its loop within {n} ticks")
+            self.seconds = seconds = ref[-1]["t"] + ref[-1]["dur"]
+        else:
+            self.seconds = seconds
+            self.fade0 = round((seconds - fade) / T2_UNIT)
+            self.fstep = max(1, round(fade / T2_UNIT / 64))
+            ref = pl.run(seconds + 2)
+            n = end_tick(ref, self.fade0, self.fstep)
         self.orig_len = len(orig)
         self.mod = trim(orig, ref[:n + 1])
         self.rt = rt = Rt(self.mod)
         smps, order, pats, nch = parse(self.mod)
-        ticks = Player(smps, order, pats, nch, track=False).run(seconds + 2)
-        a, b = events(ref[:n]), events(ticks[:n])
+        pz = Player(smps, order, pats, nch, track=False)
+        ticks = pz.run(seconds + 2, max_ticks=n if loop else 10 ** 6)
+        for what in pl.unplayable.values():
+            self.problem(strict, f"{what}: the ROM player does not play it")
+        for s in sorted({o["trig"][0] for tk in ref[:n] for o in tk["ch"] if o["trig"]}):
+            smp = smps[s] if s < len(smps) else None
+            if smp and smp["loop"] and smp["loop"][0] == 0 and sum(smp["loop"]) < len(smp["data"]):
+                self.problem(strict, f"sample {s}: a loop from 0 shorter than the sample (ProTracker plays "
+                                     f"the whole sample first, OpenMPT only with a restart byte other than 7Fh)")
+        heard = [[o["sounding"] for o in tk["ch"]] for tk in ref[:n]]
+        a, b = events(ref[:n], heard), events(ticks[:n], heard)
         bad = next((i for i in range(n) if a[i] != b[i]), None)
         if bad is not None:
             self.problem(strict, f"tick {bad}: the ROM player would play {b[bad]}, ProTracker {a[bad]} "
@@ -853,6 +1078,12 @@ class Song:
         self.image = rt.image()
         self.pans = rt.pans
         self.named = [s for s in range(1, 32) if rt.smp[s]["len"]]
+
+    def pass_seconds(self):
+        """A looping song: the length of its loop (the last pass modelled), in s."""
+        a, b = self.pass_starts[-2], self.pass_starts[-1]
+        t = [tk["t"] for tk in self.ticks] + [self.ticks[-1]["t"] + self.ticks[-1]["dur"]]
+        return t[b] - t[a]
 
     def problem(self, strict, msg):
         if strict:
@@ -871,8 +1102,9 @@ class Song:
         return [tk["t"] for tk in self.ticks], real
 
     def pack(self, first_bank, start=0x8000, tab=None):
-        """The lookup tables (in one bank; unless tab says where they already
-        are: (bank, address)), then the MOD, from `start` in bank first_bank.
+        """The lookup tables and the 9xx tones after them (tab_blob, in one
+        bank; unless tab says where they already are: (bank, address)), then
+        the MOD, from `start` in bank first_bank.
         Returns (banks: bytearrays, the first one starting at `start`;
         equates for geo3d_modplay.asm); self.packed keeps where they went."""
         assert 0x8000 <= start < 0xC000, hex(start)
@@ -882,10 +1114,11 @@ class Song:
         def where(x):
             return first_bank + x // BANK, 0x8000 + x % BANK
         if tab is None:
-            if off + TAB_LEN > BANK:
+            blob = self.tab_blob()
+            if off + len(blob) > BANK:
                 buf += bytes(BANK - off)
             tab = where(len(buf))
-            buf += tables()
+            buf += blob
         mod_at = len(buf)
         buf += self.mod
         banks = [bytearray(buf[i:i + BANK]) for i in range(0, len(buf), BANK)]
@@ -898,17 +1131,41 @@ class Song:
                f"MP_TAB_ADDR:    equ 0x{ta:04x}",
                f"MP_MOD_BANK:    equ {mb}\t\t; the MOD ({len(self.mod)} bytes)",
                f"MP_MOD_ADDR:    equ 0x{ma:04x}",
-               f"MP_FADE0:       equ {self.fade0}\t; the fade: from this many timer 2 steps on,",
-               f"MP_FSTEP:       equ {self.fstep}\t\t; 1/64 of the level less every this many"]
+               f"MP_NTT:         equ {len(self.rt.keys) - 31}\t\t; 9xx tones after the tables (MP_T_TT)",
+               "MP_NULL:        equ 0\t\t; 1: timer 2 never starts (build_rom.py --null-mod)"]
+        if self.loop:
+            equ += ["MP_LOOP:        equ 1\t\t; the song loops for ever: no fade, no END",
+                    "MP_FADE0:       equ 0", "MP_FSTEP:       equ 1"]
+        else:
+            equ += ["MP_LOOP:        equ 0",
+                    f"MP_FADE0:       equ {self.fade0}\t; the fade: from this many timer 2 steps on,",
+                    f"MP_FSTEP:       equ {self.fstep}\t\t; 1/64 of the level less every this many"]
         return banks, "\n".join(equ) + "\n" + tab_equ()
+
+    def tab_blob(self):
+        """What goes at MP_TAB_ADDR: the lookup tables, then the 9xx tones."""
+        blob = tables() + self.rt.tt_bytes()
+        assert len(blob) <= BANK
+        return blob
 
     def summary(self):
         rt = self.rt
         n_notes = sum(1 for tk in self.ticks for o in tk["ch"] if o["trig"])
         bpms = sorted({tk["bpm"] for tk in self.ticks})
         last = self.ticks[-1]
-        return (f"{len(self.ticks)} ticks until the END ({last['t'] + last['dur']:.3f} s, positions 0-"
-                f"{rt.songlen - 1}), BPM {bpms}; {n_notes} notes; ROM MOD {len(self.mod)} bytes of "
+        if self.loop:
+            ps = self.pass_starts
+            t = [tk["t"] for tk in self.ticks] + [last["t"] + last["dur"]]
+            lens = [f"{t[b] - t[a]:.3f} s" for a, b in zip(ps, ps[1:])]
+            cnt = [f"{b - a} ticks" for a, b in zip(ps, ps[1:])]
+            if len(cnt) > 4:
+                cnt, lens = cnt[:2] + ["..."] + cnt[-1:], lens[:2] + ["..."] + lens[-1:]
+            head = (f"looping: {len(ps) - 1} passes modelled ({len(self.ticks)} ticks; passes of "
+                    f"{', '.join(cnt)}: {', '.join(lens)}; the loop "
+                    f"goes back to {self.ticks[ps[1]]['pos'][:2] if ps[1] < len(self.ticks) else 'its start'})")
+        else:
+            head = f"{len(self.ticks)} ticks until the END ({last['t'] + last['dur']:.3f} s"
+        return (f"{head}, positions 0-{rt.songlen - 1}), BPM {bpms}; {n_notes} notes; ROM MOD {len(self.mod)} bytes of "
                 f"{self.orig_len} (patterns 0-{rt.npat - 1}, samples {self.named}); {len(rt.keys) - 31} 9xx "
                 f"tones {rt.keys[31:]}; sample RAM {len(self.image)} bytes ({rt.blocks} x 128 KB)")
 
@@ -916,8 +1173,10 @@ class Song:
 def no_mod_equ():
     return ("; generated by build_rom.py: no MOD, do not edit\n"
             "MOD_SONG:       equ 0\n"
-            "MP_TAB_BANK:    equ 0\nMP_TAB_ADDR:    equ 0x8000\nMP_MOD_BANK:    equ 0\n"
-            "MP_MOD_ADDR:    equ 0x8000\nMP_FADE0:       equ 0\nMP_FSTEP:       equ 1\n" + tab_equ())
+            "MP_TAB_BANK:    equ 0\nMP_TAB_ADDR:    equ 0x8000\nMP_MOD_BANK:    equ 0\nMP_NTT:         equ 0\n"
+            "MP_NULL:        equ 0\n"
+            "MP_MOD_ADDR:    equ 0x8000\nMP_LOOP:        equ 0\nMP_FADE0:       equ 0\nMP_FSTEP:       equ 1\n"
+            + tab_equ())
 
 
 def main():

@@ -1,0 +1,607 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Alex Moncks
+"""Does a MOD's CPU time fit in the demo ROM? build_rom.py's check, so that
+with the MOD playing no black screen, texture frame or demo start of the
+demo ROM comes later than in the uncompressed reference ROM, and no frame
+paced by PACE is late. A MOD that does not fit gets the conversion only.
+
+The MOD player's work per tick (measure): modplay_test.asm with the MOD in
+the Z80 emulator (pip z80, the MSX's M1 waits counted: z80clock.py) and the
+emulated MoonSound (opl4emu.py), page 2 given back after each piece of work
+as the demo ROM does, three times: polled with mod_poll ~300 cycles apart
+(a host that waits: the tick's key ons and changes when it is due, its
+"head", then the next tick worked out a piece a poll, its "prep"), with
+mod_tpoll (a busy host: all of a tick's work when it is due, "full", tone
+header loads waited for) and with mod_poll ~100 cycles apart (the demo
+ROM's polls after an EAGER, "prep_e"). Clock cycles of the 3.58 MHz MSX,
+per tick of the song's first two passes (the second is its loop), cached
+in out/modcost/.
+
+The frames (frame_times.json, --measure-frames): per demo and per frame,
+from openMSX runs (en, es, pt, 410 s: the demos three times through) of
+the reference ROM and of two measuring builds of the demo ROM (build_rom.py
+--null-mod: the MOD player's hooks, uploads and polls, but no tick ever
+due; --null-mod 2: and nothing decoded ahead): busy, the ms from the last
+flip to op_flip; pace, the blanks the frame takes; ref, the reference's
+blanks for the frames whose length the upload sets (each demo's black
+screen, counted from the last flip of the demo before it, and tex's
+texture frame); dec, the ms the flip's wait spent decoding ahead; cons, the
+ms of decoding its own ops take (busy without decoding ahead, less busy
+with it); lead, how far ahead of the ops the decoder is after the frame
+(from dec and cons). Measured again when the streams change.
+
+The model (ModState, frame_step), as the ROM runs: in a steady frame's busy
+part each tick that comes due costs its prep still to do and its head
+(mod_tpoll); in a black screen or texture frame (EAGER: mod_poll) each
+tick's prep comes right after it; in the wait for the blank the MOD works
+out the next tick and plays the ticks that come due, in time the decoder
+would have used to decode ahead: what it could not decode it owes, and
+decodes on demand when the ops come (past its lead, at most the frame's
+own decoding). The op_flip rule gives the flip.
+
+The check (fit): (simulate) the demo sequence in each language 200 times
+through, the MOD from the first crawl's first flip on; and (sweep) the
+frames most at risk, each black screen, tex's texture frame and each
+demo's two tightest steady frames, with the song against them at every
+tick of its loop (and 2 ms apart after each, for the steady frames). The
+MOD fits when every frame has GUARDS_MS to spare: the model replayed on
+openMSX runs of the ROM with four MODs (Star Wars, children, blueberr and
+a dense test MOD, 2 x 410 s each: each frame from the real flip before it,
+the ticks from the real timer) was at most 1.1 ms optimistic for steady
+frames, 2.4 ms for flyin's, which decode the most, 0.8 ms for the black
+screens and the texture frame.
+
+Usage: modcost.py MOD                   the check for this MOD (as build_rom.py does it)
+       modcost.py --measure-frames REF.ROM NULL.ROM NULL_LABELS NODEC.ROM NODEC_LABELS
+                                        frame_times.json from openMSX
+"""
+import argparse
+import hashlib
+import json
+import math
+import os
+import subprocess
+import sys
+from array import array
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+import modplay  # noqa: E402
+import opl4emu  # noqa: E402
+import z80clock  # noqa: E402
+
+BANK = modplay.BANK
+T_HZ = opl4emu.T_HZ
+VERSION = 2                                 # of the measure (the cache key)
+# the time a frame must have to spare in the model, per kind of frame (see
+# the module doc: the model's error against openMSX, with a margin)
+GUARDS_MS = {"steady": 1.5, "decode": 3.0, "black": 3.0, "upload": 3.0}
+CYCLES = 200
+FRAMES = os.path.join(HERE, "frame_times.json")
+FRAME_S = 1368 * 262 / 21477270             # an NTSC frame (59.92 Hz)
+ORDER = ["crawl", "wire", "faces", "tex", "panzoom", "flyin"]
+UPLOAD_FRAMES = {"tex": [1]}                # (build_rom.py UPLOAD_FRAMES)
+
+
+# ------------------------------------------------------------- the measure
+def labels_of(path):
+    labels = {}
+    for line in open(path):
+        p = line.replace(":", " ").split()
+        if len(p) >= 3 and p[1] == "equ":
+            labels[p[0]] = int(p[2].lstrip("$").replace("0x", ""), 16)
+    return labels
+
+
+def build(song, work, mode, gap):
+    banks, equ = song.pack(1)
+    open(os.path.join(work, "rom_mod.asm"), "w").write(equ)
+    open(os.path.join(work, "rom_test.asm"), "w").write(
+        f"; generated by modcost.py\nT_GAP:  equ {gap}\nT_MODE: equ {mode}\nT_RB:   equ 1\n")
+    subprocess.run(["z80asm", "-I", work, "-I", HERE, "-o", "bank0.bin", "--label=labels.txt",
+                    os.path.join(HERE, "modplay_test.asm")], cwd=work, check=True)
+    bank0 = open(os.path.join(work, "bank0.bin"), "rb").read()
+    rom = bytearray(bank0) + bytes(BANK - len(bank0))
+    for b in banks:
+        rom += b + bytes(BANK - len(b))
+    return bytes(rom), labels_of(os.path.join(work, "labels.txt"))
+
+
+def run(rom, labels, n_ticks, mode):
+    """The test ROM until n_ticks ticks played: per tick, the cycles its
+    polls took beyond an idle poll's. mode 1 (mod_tpoll): [full]; mode 0
+    (mod_poll): [head], [prep] (prep[i]: tick i worked out, in the polls
+    after tick i - 1)."""
+    import z80
+    m = z80.Z80Machine()
+    m.set_memory_block(0x4000, rom[0:BANK])
+    m.set_memory_block(0x0024, b"\xC9")
+    m.set_memory_block(0x0138, b"\xC9")
+    m.set_memory_block(0xFCC1, bytes(5))
+    m.sp = 0xF37D
+    m.pc = rom[2] | rom[3] << 8
+    ms = opl4emu.MoonSound(640)
+    clock = z80clock.MsxClock(m)
+    # the status read at a poll's start (the IN, or the instruction after it)
+    firsts = [labels["mod_tpoll"]] if mode else [labels["mod_poll"] + 6, labels["mp_more"]]
+    entry = {a + d for a in firsts for d in (0, 2)}
+    reads_t, reads_due = array("d"), array("b")
+    st = {"start": None}
+
+    def on_out(port, v):
+        ms.port_out(port & 0xFF, v, clock.now())
+
+    def on_in(port):
+        t = clock.now()
+        v = ms.port_in(port & 0xFF, t)
+        v = 0xFF if v is None else v
+        if (port & 0xFF) == 0xC4 and m.pc in entry and st["start"] is not None:
+            reads_t.append(t)
+            reads_due.append(1 if v & 0x20 else 0)
+        return v
+    m.set_output_callback(on_out)
+    m.set_input_callback(on_in)
+    stops = {0x0024, 0x0138, labels["mp_setbank"], labels["mod_start"]}
+    for a in stops:
+        m.set_breakpoint(a)
+    tick_at = labels["mp_ticks"]
+    while True:
+        if clock.run(200000):
+            pc = m.pc
+            if pc == 0x0138:
+                m.a = 0b00010100
+            elif pc == labels["mp_setbank"]:
+                b = m.a
+                m.set_memory_block(0x8000, bytes(rom[b * BANK:(b + 1) * BANK]).ljust(BANK, b"\xFF"))
+            elif pc == labels["mod_start"]:
+                st["start"] = clock.now()
+            clock.step_over()
+        if m.memory[0xC000] in (3, 0xEE) or m.halted:
+            raise RuntimeError(f"the test ROM stopped (phase {m.memory[0xC000]:02x})")
+        if (m.memory[tick_at] | m.memory[tick_at + 1] << 8) >= n_ticks + 1:
+            break
+    t, due = list(reads_t), list(reads_due)
+    gaps = [b - a for a, b in zip(t, t[1:])]
+    g0 = min(gaps)
+    work = [max(0.0, g - g0) for g in gaps]
+    first = t[0] - st["start"]                  # mod_start and tick 0, to the first poll
+    ticks = [i for i in range(len(gaps)) if due[i]]
+    if mode:
+        full = [first] + [work[i] for i in ticks]
+        return {"full": [round(x) for x in full[:n_ticks]], "idle_poll": round(g0)}
+    head = [first] + [work[i] for i in ticks]
+    prep = [0.0, sum(work[:ticks[0]])]      # (tick 0's: in mod_start; tick 1's: after it)
+    for a, b in zip(ticks, ticks[1:]):
+        prep.append(sum(work[a + 1:b]))
+    return {"head": [round(x) for x in head[:n_ticks]], "prep": [round(x) for x in prep[:n_ticks]],
+            "idle_poll": round(g0)}
+
+
+def measure(song, out_dir):
+    """Per tick of the song's first two passes (the whole song if it does
+    not loop): {"head", "prep", "full"} in MSX clock cycles, cached."""
+    n = len(song.ticks)
+    if song.loop and len(song.pass_starts) > 2:
+        n = min(n, song.pass_starts[2])
+    h = hashlib.sha1()
+    h.update(song.mod)
+    for f in ("geo3d_modplay.asm", "modplay_test.asm", "opl4emu.py", "z80clock.py"):
+        h.update(open(os.path.join(HERE, f), "rb").read())
+    h.update(f"{VERSION} {n}".encode())
+    cache = os.path.join(out_dir, "modcost")
+    os.makedirs(cache, exist_ok=True)
+    path = os.path.join(cache, h.hexdigest() + ".json")
+    if os.path.exists(path):
+        return json.load(open(path))
+    work = os.path.join(cache, "work")
+    os.makedirs(work, exist_ok=True)
+    res = {}
+    for mode in (0, 1):
+        rom, labels = build(song, work, mode, 5)
+        res.update(run(rom, labels, n, mode))
+    res["full"] = [max(f, h + p) for f, h, p in zip(res["full"], res["head"], res["prep"])]
+    # the eager host (EAGER: mod_poll before every op): polls ~100 cycles apart
+    rom, labels = build(song, work, 0, 1)
+    e = run(rom, labels, n, 0)
+    res["prep_e"] = e["prep"]
+    json.dump(res, open(path, "w"))
+    return res
+
+
+# ---------------------------------------------------------------- the check
+class ModState:
+    """The MOD in the model: the next tick (j), when it is due (s, seconds
+    from the first crawl's first flip, when the song starts), the prep of
+    it still to do (rem). Times in seconds."""
+
+    def __init__(self, song, cost, t0=0.0):
+        sec = 1.0 / T_HZ
+        self.head = [x * sec for x in cost["head"]]
+        full = [x * sec for x in cost["full"]]
+        # the prep as the busy host pays it (header loads waited for) where it is more
+        self.prep = [max(p * sec, f - h) for p, f, h in zip(cost["prep"], full, self.head)]
+        self.prep_e = [x * sec for x in cost.get("prep_e", cost["prep"])]
+        self.full = [h + p for h, p in zip(self.head, self.prep)]
+        self.n = len(self.head)
+        self.dur = [c * modplay.T2_UNIT for c in song.counts[:self.n]]
+        self.loop0 = song.pass_starts[1] if song.loop and len(song.pass_starts) > 2 else None
+        self.j, self.s = 1, t0 + self.dur[0]
+        self.rem = self.prep[1] if self.n > 1 else 0.0
+
+    def copy(self):
+        c = ModState.__new__(ModState)
+        c.__dict__.update(self.__dict__)
+        return c
+
+    def _play(self, now):
+        """the tick j at max(now, its time): its prep left and its head; -> the time after it"""
+        now = max(now, self.s) + self.rem + self.head[self.j]
+        self.s += self.dur[self.j]
+        self.j += 1
+        if self.j >= self.n:
+            self.j = self.loop0
+        self.rem = self.prep[self.j] if self.j is not None else 0.0
+        return now
+
+    def busy(self, now, left, eager=False):
+        """CPU work `left` from `now`, and every tick that comes due meanwhile
+        (mod_tpoll: its prep left, its head); eager (after an EAGER: mod_poll):
+        each tick's prep as soon as it can, the one left first. -> when the
+        work is done"""
+        if eager and self.j is not None:
+            now += self.rem
+            self.rem = 0.0
+        while self.j is not None and self.s < now + left:
+            left -= max(0.0, self.s - now)
+            now = self._play(now)
+            if eager and self.j is not None:
+                now += max(self.rem, self.prep_e[self.j])
+                self.rem = 0.0
+        return now + left
+
+    def idle(self, now, until):
+        """the wait from now to `until` (the blank): the prep of the next tick,
+        and the ticks that come due (mod_poll); -> the MOD's time in it"""
+        used = 0.0
+        while self.j is not None:
+            if self.rem > 0:
+                do = min(self.rem, max(0.0, min(until, self.s) - now))
+                self.rem -= do
+                now += do
+                used += do
+            if self.s < until:
+                used += self.rem + self.head[self.j]
+                now = self._play(now)
+            else:
+                break
+        return used
+
+
+def flip_of(F, e, p, fr):
+    """op_flip entered at e, the last flip at F (a blank), PACE p: -> the
+    flip's time: the p-th blank after F; after a blank went by, the
+    (p - 1)-th after e"""
+    if e < F + fr:
+        return F + p * fr
+    return F + math.ceil((e - F) / fr) * fr + (p - 2) * fr
+
+
+def kind_of(nm, k):
+    return "black" if k == 0 else "upload" if k in UPLOAD_FRAMES.get(nm.split("_")[0], []) else "steady"
+
+
+def frame_step(st, F, carry, dm, nm, k, fr, extra=0.0):
+    """Frame k of demo dm in the model, from the last flip F: -> (op_flip's
+    time, the flip's, its time to spare, the decoding owed after it). The
+    MOD's state st moves on."""
+    kind = kind_of(nm, k)
+    if k == 0:
+        carry = 0.0                 # (a demo's setup is raw: nothing to decode)
+    # what the decoder could not decode ahead (carry) it decodes when the ops
+    # are due: the part of it past what it had ahead of them without the MOD
+    # (lead), at most what this frame's ops take to decode
+    pay = min(carry, max(0.0, carry - dm["lead"][k - 1] / 1e3) if k else carry, dm["cons"][k] / 1e3)
+    carry -= pay
+    # the busy part: mod_tpoll, or mod_poll after an EAGER (black screens, uploads)
+    e = st.busy(F, dm["busy"][k] / 1e3 + extra + pay, kind != "steady")
+    flip = flip_of(F, e, dm["pace"][k], fr)
+    spare = F + (dm["pace"][k] if kind == "steady" else dm["ref"][k]) * fr - e
+    # the wait for the blank: the MOD's work there takes the time the decoder
+    # had to decode ahead (dec, and what it owes): what it could not, it owes
+    mod_idle = st.idle(e, flip)
+    carry = max(0.0, carry + dm["dec"][k] / 1e3 - max(0.0, flip - e - mod_idle))
+    return e, flip, spare, carry
+
+
+def guard_of(frames, nm, kind, guards):
+    if kind == "steady" and decodes(frames["demos"][nm]):
+        kind = "decode"
+    return guards[kind] / 1e3
+
+
+def sequence(frames, lang):
+    return [("crawl_" + lang, frames["demos"]["crawl_" + lang])] + [(d, frames["demos"][d]) for d in ORDER[1:]]
+
+
+def simulate(song, cost, frames, lang, cycles, guards, trace=None):
+    """The demo sequence `cycles` times through with the MOD from the first
+    crawl's first flip on. -> (least time to spare per demo and kind of
+    frame, the frames too close to late)"""
+    fr = frames["frame"]
+    seq = sequence(frames, lang)
+    worst, late = {}, []
+    st = ModState(song, cost)
+    F, carry = 0.0, 0.0
+    for c in range(cycles):
+        for d, (nm, dm) in enumerate(seq):
+            for k in range(1 if (c == 0 and d == 0) else 0, len(dm["busy"])):
+                extra = st.head[0] if (c == 0 and d == 0 and k == 1) else 0.0     # (mod_start, tick 0)
+                e, flip, spare, carry = frame_step(st, F, carry, dm, nm, k, fr, extra)
+                kind = kind_of(nm, k)
+                key = f"{nm} {kind}"
+                worst[key] = min(worst.get(key, 1e9), spare)
+                if trace is not None:
+                    ik = (lang, c * 6 + d + 1, nm, kind)
+                    trace[ik] = min(trace.get(ik, 1e9), spare)
+                if spare < guard_of(frames, nm, kind, guards):
+                    late.append((f"time {c + 1}", nm, k, round(spare * 1e3, 2)))
+                F = flip
+            if st.j is None:
+                return worst, late
+    return worst, late
+
+
+def sweep(song, cost, frames, guards, n_steady=2, subs=10):
+    """The frames most at risk, the song against them at every tick of its
+    loop (and at `subs` points 2 ms apart after each, for steady frames):
+    each black screen (from the two frames before it), tex's texture frame,
+    and each demo's n_steady tightest steady frames (from the three before
+    them), with the tick due there still to prepare. -> (least time to spare
+    per demo and kind, the frames too close to late)"""
+    fr = frames["frame"]
+    seq = sequence(frames, "en")
+    seq = seq + [(f"crawl_{lang}", frames["demos"][f"crawl_{lang}"]) for lang in ("es", "pt")]
+    base = ModState(song, cost)
+    ticks = list(range(base.loop0 if base.loop0 is not None else 1, base.n))
+    worst, late = {}, []
+    for d, (nm, dm) in enumerate(seq):
+        pnm, pdm = seq[d - 1] if d < 6 else seq[5]      # (before a crawl: flyin)
+        up = UPLOAD_FRAMES.get(nm.split("_")[0], [])
+        steady = sorted((dm["pace"][k] * fr - dm["busy"][k] / 1e3, k) for k in range(1, len(dm["busy"]))
+                        if k not in up)[:n_steady]
+        targets = [0] + up + [k for _, k in steady]
+        for k0 in targets:
+            if k0 == 0:
+                win = [(pnm, pdm, len(pdm["busy"]) - 2), (pnm, pdm, len(pdm["busy"]) - 1), (nm, dm, 0)]
+            else:
+                win = [(nm, dm, k) for k in range(max(0, k0 - 3), k0 + 1)]
+            kind = kind_of(nm, k0)
+            offs = [0.0] if kind != "steady" else [i * 0.002 for i in range(subs)]
+            least = 1e9
+            for j in ticks:
+                for x in offs:
+                    st = base.copy()
+                    st.j, st.s, st.rem = j, x, st.prep[j]
+                    F, carry = 0.0, 0.0
+                    for wnm, wdm, k in win:
+                        e, flip, spare, carry = frame_step(st, F, carry, wdm, wnm, k, fr)
+                        F = flip
+                    least = min(least, spare)
+            key = f"{nm} {kind}"
+            worst[key] = min(worst.get(key, 1e9), least)
+            if least < guard_of(frames, nm, kind, guards):
+                late.append(("at worst", nm, k0, round(least * 1e3, 2)))
+    return worst, late
+
+
+def fit(song, cost, frames=None, cycles=CYCLES, guards=GUARDS_MS, trace=None, full_sweep=True):
+    """The MOD in the demo sequence (see the module doc): -> (ok, report
+    lines, details dict). trace (a dict): the simulation's least time to
+    spare per (language, demo instance, demo, kind of frame), for comparing
+    with openMSX."""
+    frames = frames or json.load(open(FRAMES))
+    report, details, ok = [], {}, True
+    w2, l2 = sweep(song, cost, frames, guards) if full_sweep else ({}, [])
+    for lang in ("en", "es", "pt"):
+        worst, late = simulate(song, cost, frames, lang, cycles, guards, trace)
+        for k, v in w2.items():
+            if not k.startswith("crawl") or k.startswith(f"crawl_{lang}"):
+                worst[k] = min(worst.get(k, 1e9), v)
+        late += [x for x in l2 if not x[1].startswith("crawl") or x[1] == f"crawl_{lang}"]
+        good = not late
+        ok = ok and good
+        details[lang] = {"late": late[:20], "n_late": len(late),
+                         "least_spare_ms": {k: round(v * 1e3, 2) for k, v in worst.items()}}
+        report.append(f"{lang}: {'fits' if good else 'DOES NOT FIT'}; least time to spare: "
+                      + ", ".join(f"{k} {v * 1e3:.1f} ms" for k, v in sorted(worst.items(), key=lambda kv: kv[1])[:6])
+                      + (f"; {len(late)} frames late or too close to it: {late[:4]}" if late else ""))
+    return ok, report, details
+
+
+def decodes(dm):
+    """a demo whose frames decode a lot (flyin: 3.7 ms a frame, the others
+    under 0.7): the model of its decoding with the MOD is looser"""
+    return sum(dm["cons"]) / len(dm["cons"]) > 2.0
+
+
+def summary(cost):
+    """mean / median / max full work per tick, in cycles"""
+    f = sorted(cost["full"])
+    return dict(mean=round(sum(f) / len(f)), median=f[len(f) // 2], max=f[-1],
+                head_max=max(cost["head"]), idle_poll=cost.get("idle_poll"))
+
+
+# ---------------------------------------------------------- measure_frames
+FLIPS_TCL = r"""
+set renderer none
+set throttle off
+set mute on
+set ::f [open {%(out)s} w]
+set ::pend -1
+set ::d0 -1.0
+set ::d1 0.0
+proc ctrl_w {} {
+    if {$::pend < 0} {
+        set ::pend $::wp_last_value
+    } else {
+        if {$::wp_last_value == 0x82} {
+            if {$::d0 < 0} { set d 0.0 } else { set d [expr {$::d1 - $::d0}] }
+            puts $::f "f [machine_info time] $::pend $d"
+            set ::d0 -1.0
+        }
+        set ::pend -1
+    }
+}
+proc p4_w {} { puts $::f "d [machine_info time]" }
+debug set_watchpoint write_io 0x%(ctrl)02X {} ctrl_w
+debug set_watchpoint write_io 0x%(port4)02X {} p4_w
+debug set_bp 0x%(opflip)04x {} { puts $::f "o [machine_info time]" }
+%(probes)s
+after time %(key)s { keymatrixdown 0 %(mask)d }
+after time %(keyup)s { keymatrixup 0 %(mask)d }
+after time %(limit)s { puts $::f "end [machine_info time]"; close $::f; exit }
+"""
+
+
+PROBES_TCL = """debug set_watchpoint write_mem 0x%(p0)04x {} { if {$::d0 < 0} { set ::d0 [machine_info time] } }
+debug set_watchpoint write_mem 0x%(p1)04x {} { set ::d1 [machine_info time] }"""
+
+
+def flips_run(rom, labels, out, lang, ext, limit=410.0, key=8.0, base=0x98):
+    """openMSX: the ROM with a MoonSound, language lang chosen at `key` s;
+    d (demo_init), f (R#2 writes, and for a --null-mod ROM the time its
+    page flip's wait spent decoding ahead since the last one), o (op_flip
+    entries) with their times; the flip's wait: from the start of its
+    first token to the end of its last, the loop's own time included."""
+    tcl = out[:-4] + ".tcl"
+    probes = PROBES_TCL % dict(p0=labels["dz_probe0"], p1=labels["dz_probe1"]) if "dz_probe0" in labels else ""
+    open(tcl, "w").write(FLIPS_TCL % dict(out=out, ctrl=base + 1, port4=base + 4, opflip=labels["op_flip"],
+                                          key=key, keyup=key + 0.2, mask=1 << (1 + ["en", "es", "pt"].index(lang)),
+                                          limit=limit, probes=probes))
+    env = dict(os.environ, OPENMSX_SYSTEM_DATA=os.path.expanduser("~/openMSX/share"),
+               SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
+    exe = os.environ.get("OPENMSX", os.path.expanduser("~/openMSX/derived/x86_64-linux-opt/bin/openmsx"))
+    args = [exe, "-machine", "C-BIOS_V9968_JP"]
+    for x in ext.split():
+        args += ["-ext", x]
+    subprocess.run(args + ["-cart", rom, "-romtype", "ASCII16", "-script", tcl], env=env,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1800)
+
+
+def parse_flips(path):
+    demos, last_o = [], None
+    for line in open(path):
+        p = line.split()
+        if p[0] == "d":
+            demos.append({"init": None, "flips": [], "o": []})
+        elif p[0] == "o":
+            last_o = float(p[1])
+        elif p[0] == "f" and demos:
+            if demos[-1]["init"] is None:
+                demos[-1]["init"] = float(p[1])
+            else:
+                demos[-1]["flips"].append(float(p[1]))
+                demos[-1]["o"].append(last_o)
+                demos[-1].setdefault("dec", []).append(float(p[3]) if len(p) > 3 else 0.0)
+    return demos
+
+
+def frames_of(ref_logs, null_logs, nodec_logs):
+    """frame_times.json's demos from openMSX logs of the reference ROM, of
+    the --null-mod ROM and of the --null-mod 2 ROM (per language): busy (ms,
+    the most of every time through), pace (blanks), ref (the reference's
+    blanks), dec (ms the flip's wait spent decoding ahead), cons (ms of
+    decoding the frame's own ops take: its busy part without any decoding
+    ahead, less its busy part with it)."""
+    out = {}
+    for lang, (rl, nl, dl) in zip(("en", "es", "pt"), zip(ref_logs, null_logs, nodec_logs)):
+        R, N, D = parse_flips(rl), parse_flips(nl), parse_flips(dl)
+        for i in range(2, min(len(R), len(N), len(D)) - 1):     # (the first crawl's black screen: before the MOD)
+            r, w, x = R[i], N[i], D[i]
+            nm = ORDER[(i - 1) % 6]
+            key = nm + (f"_{lang}" if nm == "crawl" else "")
+            if len(r["flips"]) != len(w["flips"]):
+                raise ValueError(f"{key}: {len(w['flips'])} flips, the reference {len(r['flips'])}")
+            prev_r, prev_w = R[i - 1]["flips"][-1], N[i - 1]["flips"][-1]
+            e = out.setdefault(key, {"busy": [0.0] * len(w["flips"]), "pace": [2] * len(w["flips"]),
+                                     "ref": [2] * len(w["flips"]), "dec": [0.0] * len(w["flips"]),
+                                     "cons": [0.0] * len(w["flips"])})
+            if len(x["flips"]) != len(w["flips"]):
+                raise ValueError(f"{key}: {len(x['flips'])} flips without decoding ahead, {len(w['flips'])} with")
+            prev_x = D[i - 1]["flips"][-1]
+            for k in range(len(w["flips"])):
+                a_w = prev_w if k == 0 else w["flips"][k - 1]
+                a_r = prev_r if k == 0 else r["flips"][k - 1]
+                a_x = prev_x if k == 0 else x["flips"][k - 1]
+                e["busy"][k] = max(e["busy"][k], round((w["o"][k] - a_w) * 1e3, 3))
+                e["dec"][k] = max(e["dec"][k], round(w["dec"][k] * 1e3, 3))
+                e["cons"][k] = max(e["cons"][k], round(((x["o"][k] - a_x) - (w["o"][k] - a_w)) * 1e3, 3))
+                rb = round((r["flips"][k] - a_r) / FRAME_S)
+                wb = round((w["flips"][k] - a_w) / FRAME_S)
+                if k == 0 or k in UPLOAD_FRAMES.get(nm, []):
+                    e["ref"][k] = rb
+                else:
+                    if rb != wb:
+                        raise ValueError(f"{key} frame {k}: {wb} blanks, the reference {rb}")
+                    e["pace"][k] = e["ref"][k] = rb
+    return out
+
+
+def add_lead(demos):
+    """lead: per frame, how far (ms of decoding, as the frames' own
+    decoding counts it) the decoder without the MOD is ahead of the ops
+    after the frame: what it decoded ahead (dec, scaled to the frames'
+    decoding time: the demo's total cons / total dec) less what the frames
+    used (cons), from 0 at each demo's start"""
+    for v in demos.values():
+        rho = sum(v["cons"]) / max(1e-9, sum(v["dec"]))
+        lead, out = 0.0, []
+        for d, c in zip(v["dec"], v["cons"]):
+            lead = max(0.0, lead - c)           # (the frame's ops, then its wait)
+            lead += d * rho
+            out.append(round(lead, 3))
+        v["lead"] = out
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("mod", nargs="?")
+    ap.add_argument("--measure-frames", nargs=5,
+                    metavar=("REF_ROM", "NULL_ROM", "NULL_LABELS", "NODEC_ROM", "NODEC_LABELS"))
+    ap.add_argument("--ref-labels", help="the reference ROM's labels (default: labels_98.txt next to it)")
+    ap.add_argument("--ext", default="geo3d moonsound")
+    ap.add_argument("--work", default=os.path.join(HERE, "out", "modcost"))
+    ap.add_argument("--cycles", type=int, default=CYCLES)
+    a = ap.parse_args()
+    if a.measure_frames:
+        ref_rom, null_rom, null_lab, nodec_rom, nodec_lab = a.measure_frames
+        ref_lab = a.ref_labels or os.path.join(os.path.dirname(ref_rom), "labels_98.txt")
+        os.makedirs(a.work, exist_ok=True)
+        rl, nl, dl = [], [], []
+        for lang in ("en", "es", "pt"):
+            for rom, lab, tag, lst in ((ref_rom, ref_lab, "ref", rl), (null_rom, null_lab, "null", nl),
+                                       (nodec_rom, nodec_lab, "nodec", dl)):
+                path = os.path.join(a.work, f"flips_{tag}_{lang}.txt")
+                flips_run(rom, labels_of(lab), path, lang, a.ext)
+                lst.append(path)
+        demos = frames_of(rl, nl, dl)
+        add_lead(demos)
+        json.dump({"about": "modcost.py --measure-frames: per demo and frame, busy = ms from the last flip to "
+                            "op_flip with the MOD player's hooks but no tick (build_rom.py --null-mod, openMSX), "
+                            "pace = blanks, ref = the uncompressed reference ROM's blanks",
+                   "frame": FRAME_S, "demos": demos}, open(FRAMES, "w"), separators=(",", ":"))
+        print(f"{FRAMES}: " + ", ".join(f"{k} {len(v['busy'])} frames" for k, v in demos.items()))
+        return
+    song = modplay.Song(a.mod, loop=True, passes=3)
+    cost = measure(song, os.path.join(HERE, "out"))
+    print(f"work per tick (cycles): {summary(cost)}")
+    ok, rep, _ = fit(song, cost, cycles=a.cycles)
+    print("\n".join(rep))
+    print("FITS" if ok else "DOES NOT FIT")
+    sys.exit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()

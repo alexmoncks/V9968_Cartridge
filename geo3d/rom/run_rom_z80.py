@@ -29,10 +29,11 @@ converter: tick k's PSG writes at the (k+1)-th vertical blank of the crawl,
 then only the player's mute after the last tick.
 
 --moonsound KB emulates a MoonSound (OPL4, opl4emu.py) with KB of sample
-RAM, and real time: S#0 shows a vertical blank every 59736 T (an NTSC
-frame) of the Z80's T-states (the pip z80 counts no MSX M1 wait states, so
-the Z80 is a little fast here), geo3d and the command engine still answer
-at once. The chip is not forced: the ROM's own detection runs against the
+RAM, and real time: S#0 shows a vertical blank every 59736 clock cycles (an
+NTSC frame) of the MSX's 3.58 MHz clock: the Z80's T-states plus the MSX's
+wait state on every M1 cycle (z80clock.py; --no-m1: without it, the Z80
+~10-15 % fast, as earlier reports had it), geo3d and the command engine
+still answer at once. The chip is not forced: the ROM's own detection runs against the
 emulated FM part (the OPL3 timers and status, NEW2 at FM register 105h),
 the wave registers (device ID, memory address, memory data, tone loads with
 LD for 295 us, as openMSX) and its sample RAM; the MOD player's part of it
@@ -44,13 +45,21 @@ writes (between two clears of timer 2's flag) exactly the model's, the
 timer 2 periods exactly its dithered ones, every tick played before the
 next one is due (none lost), no tone number written while a header loads,
 every tone loaded a RAM tone whose header points into the samples, and
-nothing after the stop. It reports the tick and key-on latencies behind
-the timer and the longest gap between two status reads (polls) while the
-song plays. With too little sample RAM it must play the FM fallback
-(checked as --chip opl --opl4).
+nothing after the stop. A MOD that loops (the demo ROM's) never stops: it
+plays on through every demo (their PSG only muted at each demo_init), its
+passes counted; no frame paced by PACE takes more vertical blanks than the
+player counted (the black screens and the upload frames, whose length the
+upload sets, are reported: compare them with the reference ROM's).
+It reports the tick and key-on latencies behind the timer and the longest
+gaps between two status reads (polls) while the song plays, per demo. With
+too little sample RAM it must play the FM fallback (checked as --chip opl
+--opl4).
+
+--cycles N runs the demo sequence N times (each crawl plays its music from
+its start; with a looping MOD: its passes over them).
 
 Usage: run_rom_z80.py [--base 0x88|0x98] [--lang en|es|pt] [--keys digit|down|up]
-                      [--chip psg|scc|opl] [--opl4] [--moonsound KB] [--timed]
+                      [--chip psg|scc|opl] [--opl4] [--moonsound KB] [--timed] [--cycles N]
                       [--late N] [--out DIR] [--trace FILE] [space_at_flip]
   --base: port profile, 0x88 (default, GEO3D.ROM) or 0x98 (GEO3D_98.ROM, the
   emulator profile); build it first with build_rom.py --base.
@@ -77,6 +86,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 import opl4emu  # noqa: E402
+import z80clock  # noqa: E402
 BANK = 16384
 
 ap = argparse.ArgumentParser()
@@ -90,9 +100,13 @@ ap.add_argument("--opl4", action="store_true", help="with --chip opl: an OPL4 (F
 ap.add_argument("--moonsound", type=int, metavar="KB",
                 help="a MoonSound with KB of sample RAM (detection not forced; real time)")
 ap.add_argument("--timed", action="store_true", help="real time: a vertical blank every 59736 T")
+ap.add_argument("--no-m1", action="store_true", help="real time without the MSX's M1 wait (the Z80 a "
+                                                     "little fast, as before z80clock.py)")
 ap.add_argument("--late", type=int, default=0, help="the menu keys this many frames later")
 ap.add_argument("--out", default=os.path.join(HERE, "out"), help="the build's out directory")
 ap.add_argument("--trace", help="write every IN and OUT to this file ('I'/'O', port, value)")
+ap.add_argument("--cycles", type=int, default=1,
+                help="the demo sequence this many times (with a looping MOD: its passes over them)")
 ap.add_argument("space_at", nargs="?", type=int)
 opt = ap.parse_args()
 OUT = opt.out
@@ -104,7 +118,7 @@ P_DATA, P_CTRL, P_PAL, P_IND, P_PORT4 = (BASE + i for i in range(5))
 P_GIDX, P_GDAT = BASE + 5, BASE + 7
 T_HZ = 3579545                              # the Z80's clock
 FRAME_T = 1368 * 262 / 6                    # T-states per NTSC frame (59.92 Hz)
-RUN = 200000                                # T-states per emulator run
+RUN = 200000                                # T-states between two looks at the run's state
 
 rom = open(os.path.join(OUT, "GEO3D.ROM" if BASE == 0x88 else f"GEO3D_{BASE:02X}.ROM"), "rb").read()
 labels = {}
@@ -147,7 +161,7 @@ assert rom[0:2] == b"AB" and rom[2] | rom[3] << 8 == 0x4010
 st = {"r15": 0, "pend": None, "s0": 0, "geo": 0, "flips": 0, "inits": 0,
       "page2": None, "idx": None, "row": 0, "tick": 0, "blanks": 0, "fdemo": 0, "psg_reg": 0,
       "forced": False, "opl_reg": [0, 0], "in_scc": False, "scc_mem": bytearray(256),
-      "scc_9000": 0xFF, "page2_save": None, "t0": 0, "vb": 0, "vb_flip": 0}
+      "scc_9000": 0xFF, "page2_save": None, "vb": 0, "vb_flip": 0}
 SCC_SLOT = 0x02                             # where the emulated SCC sits (primary slot 2)
 TARGET = {"psg": 0, "scc": 1, "opl": 2}[opt.chip]
 events = []           # ("G", sel, b) / ("RUN",) / ("P", port, b, blanks) / ("INIT",) /
@@ -157,9 +171,13 @@ flip_t = []           # --timed: (demo, flip, T-state, real vertical blanks sinc
                       # blanks the player counted)
 
 
+clock = z80clock.MsxClock(m, not opt.no_m1)
+
+
 def now():
-    """The Z80's T-states since power on (inside an instruction: at its I/O)."""
-    return st["t0"] + RUN - m.ticks_to_stop
+    """The MSX's clock cycles since power on: T-states and M1 waits (inside
+    an instruction: at its I/O)."""
+    return clock.now()
 
 
 # ------------------------------------------------------------ MoonSound
@@ -301,9 +319,7 @@ for addr in (0x0024, 0x0138, labels["bank2_raw"], labels["psg_silence"]) + ((US_
 
 def step_over():
     """One instruction past a breakpoint, its T-states counted."""
-    m.ticks_to_stop = RUN
-    m.step_over_breakpoint()
-    st["t0"] += RUN - m.ticks_to_stop
+    clock.step_over()
 
 
 def enaslt_page2(slot):
@@ -329,13 +345,12 @@ def enaslt_page2(slot):
         st["in_scc"] = False
 
 ndemos = len(TABLE)
-target_inits = 1 + (2 if SPACE_AT is not None else ndemos + 1)
+CYCLES = 1 if SPACE_AT is not None else opt.cycles
+target_inits = 1 + (2 if SPACE_AT is not None else ndemos * CYCLES + 1)
 stuck = False
 menu_steps = 0
 while True:
-    m.ticks_to_stop = RUN
-    m.run()
-    st["t0"] += RUN - m.ticks_to_stop
+    clock.run(RUN)
     if st["inits"] == 1:
         menu_steps += 1
     if m.halted:
@@ -525,8 +540,10 @@ def opl4_tune(lo, b):
     return (0xFF, b) if b & 3 == 3 else (s & 0xFF, b + 1)
 
 
-def expected_music(ticks):
-    b0, state, out = [0] * 18, bytearray(256), []
+def expected_music(ticks, state=None):
+    """(per tick: psg writes, scc bytes that change (from state: the SCC's
+    bytes before, zeros at power on), opl writes; the SCC's bytes after)"""
+    b0, state, out = [0] * 18, bytearray(state or bytes(256)), []
     for ops in ticks:
         psg, sccw, opl = [], {}, []
         for o in ops:
@@ -574,21 +591,36 @@ def sound_at(demo_i):
 mus = exp.get("music")
 if mus and len(played) >= 1 and not stuck and not mod_play:
     want, scc_state = expected_music(mus[CHIP])
-    got = sound_at(1)
-    blanks_in = sum(int(g.split("/")[1]) for g in played[0] if g.startswith("D") and "/" in g)
     nt = len(want)
-    heard = min(nt, blanks_in)
-    bad = [k for k in range(heard)
-           if tuple(got.get(k + 1, ([], [], [], []))[:3]) != (want[k][0], list(want[k][1]), want[k][2])]
     mute = (MUTE_PSG, [(0x8F, 0)] if scc_state[0x8F] else [], MUTE_OPL if CHIP == "opl" else [])
-    tail = {f: v[:3] for f, v in got.items() if f > nt}
-    tail_ok = not tail or (list(tail) == [nt + 1] and tuple(tail[nt + 1]) == mute)
-    scc_on = all(x == 0x3F for f, v in got.items() if 1 <= f <= heard for x in v[3])
-    full = SPACE_AT is not None or blanks_in >= nt
-    # later demos: exactly the mute at their demo_init (blank 0), nothing else
-    # (the last one is cut at its INIT, before its demo_init mutes)
+    # each crawl (the first demo of each time through the sequence) plays the
+    # music from its start (the last one only if the run did not cut it)
+    crawls = [i for i in range(1, len(demos), len(TABLE)) if i == 1 or i < len(demos) - 1]
+    bad, tail_ok, scc_on, full = [], True, True, True
+    scc0 = None
+    for ci in crawls:
+        want, scc_state = expected_music(mus[CHIP], scc0)    # (the SCC keeps its waves)
+        scc0 = bytearray(scc_state)
+        scc0[0x8F] = 0                                          # (the mute)
+        got_i = sound_at(ci)
+        blanks_in = sum(int(g.split("/")[1]) for g in played[ci - 1] if g.startswith("D") and "/" in g)
+        heard_i = min(nt, blanks_in)
+        bad_i = [k for k in range(heard_i)
+                 if tuple(got_i.get(k + 1, ([], [], [], []))[:3]) != (want[k][0], list(want[k][1]), want[k][2])]
+        tail = {f: v[:3] for f, v in got_i.items() if f > nt}
+        tail_ok = tail_ok and (not tail or (list(tail) == [nt + 1] and tuple(tail[nt + 1]) == mute))
+        scc_on = scc_on and all(x == 0x3F for f, v in got_i.items() if 1 <= f <= heard_i for x in v[3])
+        full = full and (SPACE_AT is not None or blanks_in >= nt)
+        if ci == 1:
+            got, heard = got_i, heard_i
+        if bad_i and not bad:
+            bad, got = bad_i, got_i
+    # the other demos: exactly the mute at their demo_init (blank 0), nothing
+    # else (the last one is cut at its INIT, before its demo_init mutes)
     later_ok = True
     for i in range(2, len(demos) - 1):
+        if i in crawls:
+            continue
         s = sound_at(i)
         z = s.get(0, ([], [], [], []))
         if set(s) != {0} or z[0] != MUTE_PSG or z[2] != (MUTE_OPL if CHIP == "opl" else []) \
@@ -599,6 +631,7 @@ if mus and len(played) >= 1 and not stuck and not mod_play:
         print(f"   {len(late_flips)} trocas de página depois do tick de música do mesmo retraço, "
               f"a primeira: demo {late_flips[0][0]}, retraço {late_flips[0][1]}")
     print(f"música  : {CHIP}{' (OPL4)' if OPL4 else ''}: {heard} de {nt} ticks conferidos no {TABLE[0]}"
+          + (f" (e em cada um dos {len(crawls)} crawls)" if len(crawls) > 1 else "") +
           f"{' (interrompido pela barra de espaço)' if SPACE_AT is not None else ''}: "
           f"{'idêntica' if not bad and tail_ok and full and scc_on else 'DIFERENTE'}; "
           f"silêncio nos demos seguintes: {'ok' if later_ok else 'FALHOU'}")
@@ -644,10 +677,16 @@ def mod_check():
     W = [[tuple(x) for x in w] for w in mx["writes"]]
     n = len(W) - 1                          # the ticks, then the END's key offs
     stopped = t_stop < float("inf")
+    beyond = ""
+    if mx.get("loop") and len(segs) >= n:
+        # a run longer than the model (build_rom.py MOD_SECONDS): its ticks up
+        # to the model's last but one (the last has no next tick's preparation)
+        beyond = f"; a execução passou do modelo ({n} ticks): comparados os {n - 1} primeiros"
+        segs, periods = segs[:n - 1], periods[:n - 1]
     bad, last_ok = opl4emu.match_ticks(segs, W, mx["heads"], stopped)
     last = len(segs) - 1
     init_ok = init == [tuple(x) for x in mx["writes_start"]]
-    per_ok = periods == mx["counts"][:len(periods)] and len(periods) >= min(len(marks), n)
+    per_ok = periods == mx["counts"][:len(periods)] and len(periods) >= min(len(marks), n) - (1 if beyond else 0)
     fm_other = sorted({(b, r) for t, b, r, v in fmw if t >= t_entry} - {(0, 3), (0, 4), (1, 5)})
     after = [x for x in fmw if x[0] > t_stop and (x[1], x[2], x[3]) != (0, 4, 0x80)]
     how = "e o END" if stopped and last == n else "parado no demo_init" if stopped else "corte do teste"
@@ -657,7 +696,7 @@ def mod_check():
           f"períodos do timer 2 {'idênticos' if per_ok else 'DIFERENTES'} ({len(periods)}), "
           f"outras escritas FM: {fm_other or 'nenhuma'}, depois da parada: {len(after) + len(tail)}, "
           f"número de tom durante um carregamento: {len(ms.load_clash)}, tons fora dos samples: "
-          f"{len(ms.bad_loads)}")
+          f"{len(ms.bad_loads)}{beyond}")
     if bad or not last_ok:
         i = bad[0] if bad else last
         print(f"   primeiro tick diferente: {i}: ROM {segs[i][:8]}\n"
@@ -692,30 +731,65 @@ def mod_check():
     print(f"MOD     : maior intervalo entre polls (leituras de status) tocando: "
           + ", ".join(f"{t_ms(g):.2f} ms a {(a - t_start) / T_HZ:.2f} s" for g, a in gaps[:3]))
     good = good and not lost and cnt_ok
-    # the PSG: the mute of each demo_init only; later demos: nothing else
+    # a MOD that loops never stops: every tick of the run played, on through
+    # every demo (its passes: modplay.Song.pass_starts)
+    if mx.get("loop"):
+        ps = mx["pass_starts"]
+        played_n = min(len(marks), n)
+        full = sum(1 for a, b in zip(ps, ps[1:]) if b <= played_n)
+        loop_ok = not stopped and played_n >= 1
+        print(f"MOD     : a música dá voltas: {played_n} ticks tocados, {full} voltas inteiras de "
+              f"{ps[1] - ps[0]} ticks ({mx['ideal'][ps[1]] - mx['ideal'][ps[0]]:.2f} s) e "
+              f"{played_n - ps[full]} ticks da seguinte; parada: {'nenhuma' if not stopped else 'PAROU'}")
+        good = good and loop_ok
+        # the longest times between two status reads, per demo
+        dem = [t for t, _ in st["init_t"]]
+        worst = {}
+        for g, a in gaps:
+            d = max(i for i, t in enumerate(dem) if t <= a) if a >= dem[0] else 0
+            if d not in worst:
+                worst[d] = (g, a)
+        names = ["menu"] + [TABLE[i % len(TABLE)] for i in range(len(dem))]
+        print("MOD     : maior intervalo entre polls por demo: " + ", ".join(
+            f"{names[d]}#{d} {t_ms(g):.2f} ms" for d, (g, a) in sorted(worst.items())))
+    # the PSG: the mute of each demo_init only; later demos: nothing else (a
+    # looping MOD: its timer 2 writes)
     psg = [f for f, kind, data in demo_snd[1] if kind == "psg" and f > 0]
+    mod_fm = ((0, 3), (0, 4)) if mx.get("loop") else ()
     later = [(i, f, kind) for i in range(2, len(demos) - 1) for f, kind, data in demo_snd[i]
-             if not (f == 0 and (kind == "psg" or (i == 2 and kind == "opl" and data[:2] == (0, 4))))]
+             if not (f == 0 and (kind == "psg" or (i == 2 and kind == "opl" and data[:2] == (0, 4))))
+             and not (kind == "opl" and data[:2] in mod_fm)]
     print(f"MOD     : PSG no crawl além do mudo: {len(psg)} escritas; demos seguintes: "
-          f"{'silêncio' if not later else f'{len(later)} escritas'}")
+          f"{('só o MOD' if mx.get('loop') else 'silêncio') if not later else f'{len(later)} escritas'}")
     return good and not psg and not later
 
 
 if mod_play and len(played) >= 1:
     ok = mod_check() and ok
 if TIMED and not stuck:
-    # real time: per demo, the black screen before its first flip, and the
-    # frames that took more vertical blanks than the player counted (late)
-    names = ["menu"] + TABLE + [TABLE[0]]
+    # real time: per demo, the black screen before its first flip and the
+    # frames whose length an upload sets (build_rom.py UPLOAD_FRAMES), in
+    # vertical blanks, and the other frames that took more vertical blanks
+    # than the player counted (late: with the MOD, a failure)
+    names = ["menu"] + [TABLE[i % len(TABLE)] for i in range(ndemos * CYCLES + 1)]
+    upf = exp.get("upload_frames", {})
+    n_late = 0
     for d in sorted({f[0] for f in flip_t}):
         fl = [f for f in flip_t if f[0] == d]
         if len(fl) < 2:
             continue
-        late = [(f[1], f[3], f[4]) for f in fl[2:] if f[3] != f[4]]
-        print(f"tempo   : {names[d - 1] if d - 1 < len(names) else d:8s} tela preta até a 1a troca "
-              f"{(fl[1][2] - fl[0][2]) / T_HZ:.3f} s; {len(fl) - 1} trocas, "
-              f"{len(late)} com mais retraços que o contado" + (f": {late[:4]}" if late else ""))
-check = TABLE[:len(played) - 1] if SPACE_AT is None else TABLE[:1]
+        name = names[d - 1] if d - 1 < len(names) else str(d)
+        up = set(upf.get(name, []))
+        late = [(f[1], f[3], f[4]) for f in fl[2:] if f[3] != f[4] and f[1] - 1 not in up]
+        ups = [f"quadro {f[1] - 1}: {f[3]} retraços" for f in fl[2:] if f[1] - 1 in up]
+        n_late += len(late)
+        print(f"tempo   : {name:8s} tela preta até a 1a troca {(fl[1][2] - fl[0][2]) / T_HZ:.3f} s "
+              f"({fl[1][3]} retraços); {len(fl) - 1} trocas, {len(late)} com mais retraços que o contado"
+              + (f": {late[:4]}" if late else "") + (f"; upload: {', '.join(ups)}" if ups else ""))
+    if mod_play and n_late:
+        print(f"tempo   : {n_late} quadros atrasados com o MOD tocando: FALHOU")
+        ok = False
+check = [TABLE[i % ndemos] for i in range(len(played) - 1)] if SPACE_AT is None else TABLE[:1]
 for i, name in enumerate(check):
     got = played[i]
     if got[:len(PREFIX)] != PREFIX:
@@ -739,7 +813,8 @@ for i, name in enumerate(check):
     nd = sum(1 for g in want if g[0] == "D")
     nb = sum(int(g.split("/")[1]) for g in want if g[0] == "D")
     print(f"{name:8s}: {'idêntico' if same else 'DIFERENTE'} ao tráfego verificado  "
-          f"({nw} escritas geo3d, {nx} bytes de VRAM, {nd} quadros em {nb} vblanks)")
+          f"({nw} escritas geo3d, {nx} bytes de VRAM, {nd} quadros em {nb} vblanks)"
+          + (f" [volta {i // ndemos + 1}]" if CYCLES > 1 else ""))
     if not same:
         k = next((j for j in range(min(len(got), len(want))) if got[j] != want[j]), min(len(got), len(want)))
         print(f"   primeira diferença na posição {k}: ROM={got[k:k + 3]} esperado={want[k:k + 3]}")
@@ -755,8 +830,8 @@ if not stuck:
     ok = ok and good_at
 if SPACE_AT is None and not stuck:
     print(f"sequência ({opt.lang}): {len(played) - 1} demos e o recomeço do primeiro "
-          f"({'ok' if len(played) == ndemos + 1 else 'FALHOU'})")
-    ok = ok and len(played) == ndemos + 1
+          f"({'ok' if len(played) == ndemos * CYCLES + 1 else 'FALHOU'})")
+    ok = ok and len(played) == ndemos * CYCLES + 1
 if opt.trace:
     open(opt.trace, "wb").write(b"".join(trace))
 print(f"portas {BASE:02X}h, {opt.lang}, teclas {opt.keys}: " + ("PASS" if ok else "FAIL"))

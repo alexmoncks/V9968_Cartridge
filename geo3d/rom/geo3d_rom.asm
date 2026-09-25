@@ -13,17 +13,23 @@
 ; ops. The player decodes the current block into dz_buf (RAM, page 3) a
 ; token at a time, just ahead of the op it interprets (dz_need), and further
 ; ahead while it waits for a page flip's blank (dz_idle). A few blocks are
-; raw (the setup frames of the loop demos): the player reads those straight
-; from ROM. The music data after the streams is not compressed.
+; raw (each demo up to its first page flip, the setup frames of the loop
+; demos): the player reads those straight from ROM. Raw ops that a stream
+; placed earlier already has in ROM (the textures and tables several demos
+; upload) are not stored again: a CALL runs them where they are; a VRAM
+; upload cut by a bank's end goes on with VMORE. The music data after the
+; streams is not compressed.
 ;
-; Music: a ROM built with a ProTracker MOD holds the MOD itself, and on a
+; Music: a ROM built with a ProTracker MOD holds the whole MOD, and on a
 ; MoonSound a MOD player plays it (geo3d_modplay.asm): the Z80 reads its
 ; patterns and runs ProTracker's effects at the song's own speed and BPM
-; (the OPL4's timer 2, polled through mus_hook), and the OPL4 wave part plays
-; the MOD's own samples, uploaded to the sample RAM during the language
-; menu. Without a MoonSound, or with too little sample RAM for the samples,
-; it plays music.py's conversion instead (OPL4 / OPL3 FM + PSG, SCC + PSG,
-; or PSG), one tick per vertical blank.
+; (the OPL4's timer 2, polled through mus_hook and its kin), and the OPL4
+; wave part plays the MOD's own samples, uploaded to the sample RAM during
+; the language menu. The song starts with the first crawl and then plays on
+; for good, over and over, through every demo. Without a MoonSound, or with
+; too little sample RAM for the samples, the crawl plays music.py's
+; conversion instead (OPL4 / OPL3 FM + PSG, SCC + PSG, or PSG), one tick
+; per vertical blank.
 ;
 ; Ports: PORT_BASE comes from rom_ports.asm (written by build_rom.py):
 ;   88h  GEO3D.ROM, real hardware: V9968 cartridge with the geo3d build, DIP
@@ -60,15 +66,35 @@
 ;   0E MUSIC                        start the music: the MOD on a MoonSound
 ;                                   found during the menu (mod_start, right
 ;                                   after the next page flip; it keeps its
-;                                   own time), else music_table, the best
-;                                   chip found: OPL4/OPL3 FM, SCC + PSG, or
-;                                   PSG (one tick per vertical blank of the
-;                                   page flips); it stops at the next
-;                                   demo_init
+;                                   own time and plays on for good: a MUSIC
+;                                   while it plays does nothing), else
+;                                   music_table, the best chip found:
+;                                   OPL4/OPL3 FM, SCC + PSG, or PSG (one tick
+;                                   per vertical blank of the page flips),
+;                                   which stops at the next demo_init
 ;
-; RAM (page 3): C000h-C03Eh variables, C100h-C4FFh scc_buf, C800h-E7FFh
-; dz_buf, E800h-ED80h the MOD player's (MP_RAM), the stack below F000h.
-; Free: C03Fh-C0FFh, C500h-C7FFh and ED81h-EEFFh.
+;   0F CALL  bank first(2) end(2)   the raw ops at first..end-1 of that bank
+;                                   (page 2), then back to the op after the
+;                                   CALL: a raw block's ops already in ROM (the
+;                                   same texture or table in several demos)
+;                                   are stored once and run from there, as
+;                                   fast as they run in their own stream
+;   10 VMORE len(2) rle             more RLE data for the VRAM upload in
+;                                   progress (a VRLE cut at a bank's end); no
+;                                   port write but the data, so the traffic is
+;                                   the VRLE's. Raw blocks only
+;   11 EAGER                        while the MOD plays, until the next page
+;                                   flip: the polls in busy code work out the
+;                                   MOD's next tick at once (mod_poll), not
+;                                   in the flip's wait, which is far off in a
+;                                   frame an upload makes long (a demo's
+;                                   black screen, tex's textures): its notes
+;                                   keep their time. No traffic (op_eager)
+;
+; RAM (page 3): C000h-C054h variables, C100h-C4FFh scc_buf, C800h-E7FFh
+; dz_buf, E800h-EDE0h the MOD player's (MP_RAM), the stack below F000h.
+; Free: C050h, C055h-C0FFh, C500h-C7FFh and EDE1h-EEFFh (C04Eh-C04Fh: written
+; only by a --null-mod ROM, a measure).
 ;
 ; Assemble: z80asm -o bank0.bin geo3d_rom.asm (build_rom.py does it all)
 ; ============================================================================
@@ -127,12 +153,24 @@ dz_src:     equ 0xC032          ; 2 bytes: next token (page 2, bank curbank)
 dz_dst:     equ 0xC034          ; 2 bytes: dz_buf is decoded up to here
 dz_noff:    equ 0xC036          ; 2 bytes: last match offset, negated
 dz_lim:     equ 0xC038          ; 2 bytes: dz_need decodes up to here
-dz_end:     equ 0xC03A          ; 1: the block is decoded to its end
+dz_end:     equ 0xC03A          ; 0: decoding the block, 1: a raw block or the
+                                ; block decoded to its end, 2: inside a CALL
 mus_hook:   equ 0xC03B          ; 3 bytes: RET, or JP mod_poll while the MOD plays
 mod_go:     equ 0xC03E          ; 1: the MOD starts after the next page flip
+call_bank:  equ 0xC03F          ; CALL: the caller's bank,
+call_ret:   equ 0xC040          ;   2 bytes: its next op,
+call_end:   equ 0xC042          ;   2 bytes: the end of the ops called
+hw_hook:    equ 0xC044          ; 3 bytes: the geo3d and command engine waits' poll: RET, or JP mod_hw
+vrle_jp:    equ 0xC047          ; 3 bytes: JP op_vrle, or JP op_vrle_f while the MOD plays
+vmore_jp:   equ 0xC04A          ; 3 bytes: JP op_vmore, or JP op_vmore_f
+mod_live:   equ 0xC04D          ; 1: the MOD plays (from its start on, for good)
+dz_probe0:  equ 0xC04E          ; (--null-mod only: a token decoded ahead starts,
+dz_probe1:  equ 0xC04F          ;   and ends)
+vf_endh:    equ 0xC051          ; op_vrle_f: the end of the RLE data, high byte
+idle_hook:  equ 0xC052          ; 3 bytes: the page flip's wait's poll: RET, or JP mod_poll
 scc_buf:    equ 0xC100          ; 1 KB: this tick's SCC writes (offset, value)
 dz_buf:     equ 0xC800          ; 8 KB: the stream block being played (C800h-E7FFh)
-MP_RAM:     equ 0xE800          ; 1409 bytes: the MOD player's (geo3d_modplay.asm)
+MP_RAM:     equ 0xE800          ; 1505 bytes: the MOD player's (geo3d_modplay.asm)
 
 DZ_AHEAD:   equ 259             ; dz_need before each op: an op is at most
                                 ; 258 bytes (GEO, VIND), but VRLE asks for its own
@@ -175,6 +213,17 @@ init:
         ld (keyprev), a
         ld a, 0xC9
         ld (mus_hook), a            ; RET: no music module poll
+        ld (hw_hook), a
+        ld (idle_hook), a
+        ld a, 0xC3
+        ld (vrle_jp), a             ; JP op_vrle, JP op_vmore: the uploads as
+        ld (vmore_jp), a            ; they are without the MOD
+        ld hl, op_vrle
+        ld (vrle_jp + 1), hl
+        ld hl, op_vmore
+        ld (vmore_jp + 1), hl
+        xor a
+        ld (mod_live), a
         call music_detect
         call psg_silence
         ld hl, menu_entry           ; the menu is a stream too (picture + MENU)
@@ -214,7 +263,7 @@ interp:
         call mus_hook               ; the MOD's poll, before every op
         ld a, (dz_end)              ; a raw block, or decoded to its end:
         or a                        ; nothing to decode
-        jr nz, ip_op
+        jr nz, ip_raw
         ld bc, DZ_AHEAD
         call dz_need                ; the whole op decoded (VRLE asks for more)
 ip_op:  ld a, (hl)
@@ -232,10 +281,60 @@ ip_op:  ld a, (hl)
         push de
         ret                         ; jump to the handler, HL = operands
 
+ip_raw: dec a
+        jr z, ip_op                 ; 1: raw, or decoded to its end
+        ld de, (call_end)           ; 2: inside a CALL: at its end?
+        ld a, l
+        cp e
+        jr nz, ip_op
+        ld a, h
+        cp d
+        jr nz, ip_op
+        ld a, 1                     ; back to the caller (a raw block)
+        ld (dz_end), a
+        ld a, (call_bank)
+        call setbank2
+        ld hl, (call_ret)
+        jr ip_op
+
 op_table:
         dw op_end, op_geo, op_geod, op_vreg, op_vind, op_waitgeo, op_waitce
-        dw op_vrle, op_flip, op_mark, op_loop, op_nextblock, op_menu, op_pace
-        dw op_music
+        dw vrle_jp, op_flip, op_mark, op_loop, op_nextblock, op_menu, op_pace
+        dw op_music, op_call, vmore_jp, op_eager
+
+; CALL, in a raw block: the ops at first..end-1 of a bank (raw ops of a
+; stream placed earlier, no NEXTBLOCK among them), then the op after it.
+; dz_end = 2 meanwhile: interp returns at the end (ip_raw).
+op_call:
+        ld a, (curbank)
+        ld (call_bank), a
+        ld a, (hl)                  ; bank
+        inc hl
+        ld e, (hl)
+        inc hl
+        ld d, (hl)                  ; DE = first op
+        inc hl
+        ld c, (hl)
+        inc hl
+        ld b, (hl)                  ; BC = end
+        inc hl
+        ld (call_ret), hl
+        ld (call_end), bc
+        call setbank2
+        ld a, 2
+        ld (dz_end), a
+        ex de, hl
+        jp interp
+
+; VMORE: the rest of a VRLE that a bank's end cut (raw blocks only): its
+; RLE data goes on at the VRAM address where the VRLE stopped
+op_vmore:
+        ld e, (hl)                  ; DE = packed length
+        inc hl
+        ld d, (hl)
+        inc hl
+        ld c, VDP_DATA
+        jp vr_loop
 
 op_end:
 next_demo:
@@ -285,7 +384,7 @@ op_waitgeo:
         in a, (GEO_IDX)
         rrca
         jp nc, interp               ; bit0 = RUN busy
-        call mus_hook
+        call hw_hook
         jr op_waitgeo
 
 op_waitce:
@@ -441,13 +540,26 @@ fl_wait:
         in a, (VDP_CTRL)
         rlca
         jr c, fl_blank
-        call mus_hook
+        call idle_hook              ; (the MOD works out its next tick here)
         in a, (VDP_CTRL)            ; again: the flip waits for the poll or for
         rlca                        ; the token, never for both
         jr c, fl_blank
         push bc
         push de
+        if MP_NULL
+        ld a, (dz_end)              ; (build_rom.py --null-mod, a measure:
+        or a                        ; dz_probe0 and dz_probe1 written around
+        jr nz, flw_1                ; each token decoded here, for openMSX's
+        if MP_NULL & 2              ; watchpoints: modcost.py; --null-mod 2:
+        jr flw_1                    ; no decoding ahead, every op decoded
+        endif                       ; when it is needed)
+        ld (dz_probe0), a
+        call dz_idle
+        ld (dz_probe1), a
+flw_1:
+        else
         call dz_idle                ; decode ahead while waiting: one token
+        endif
         pop de
         pop bc
         jr fl_wait
@@ -465,6 +577,12 @@ fl_flip:
         ld a, (mod_go)
         or a
         call nz, mod_go1            ; the MOD, if its MUSIC came since the last flip
+        ld a, (mod_live)
+        or a
+        jr z, fl_sp
+        ld hl, mod_tpoll            ; (after an EAGER: the busy host's poll again)
+        ld (mus_hook + 1), hl
+fl_sp:
         ; space bar (row 8, bit 0, active low): next demo on a new press
         in a, (PPI_C)
         and 0xF0
@@ -487,6 +605,35 @@ fl_flip:
         call wait_ce
         jp next_demo
 
+; EAGER: while the MOD plays, mus_hook works out its next tick as soon as it
+; can (mod_poll) until the next page flip puts mod_tpoll back
+op_eager:
+        ld a, (mod_live)
+        or a
+        jp z, interp
+        push hl
+        ld hl, mod_poll
+        ld (mus_hook + 1), hl
+        pop hl
+        jp interp
+
+; hw_hook while the MOD plays (the waits for geo3d and for the command
+; engine): a tick that is due, and one token more of the block (dz_idle):
+; while the hardware works, the CPU decodes ahead what the page flip's wait
+; would, which now also works out the MOD's ticks
+mod_hw:
+        push bc
+        push de
+        push hl
+        if MP_NULL & 2
+        else
+        call dz_idle
+        endif
+        pop hl
+        pop de
+        pop bc
+        jp mod_tpoll
+
 ; ----------------------------------------------------------------------------
 ; Stream decompression (G3LZ, g3lz.py). The compressed stream is read through
 ; page 2 (bank curbank); each block (at most 8 KB of ops) is decoded into
@@ -506,7 +653,8 @@ fl_flip:
 ; bytes (g3lz.py caps literal runs and matches at 128). AF' holds the token
 ; only inside dz_need: nothing else in the player keeps a value in AF'.
 ; A raw block is interpreted from ROM (HL in page 2, where dz_buf's HL is in
-; page 3): dz_dst = FFFFh and dz_end = 1, so dz_need and dz_idle do nothing.
+; page 3): dz_dst = FFFFh and dz_end = 1, so dz_need and dz_idle do nothing;
+; the ops a CALL runs are raw too, with dz_end = 2 until their end (ip_raw).
 
 ; dz_block: start the block at dz_src (bank curbank). HL = its first op, in
 ; dz_buf, or in ROM for a raw block.
@@ -733,7 +881,7 @@ mn_go:
 mn_rest:
         ld a, 255
         call mod_upload_step        ; the MOD's samples not up yet, if the
-        jr nz, mn_rest              ; choice came first (up to 1.6 s)
+        jr nz, mn_rest              ; choice came first (done ~2.0 s after the menu shows)
         ld a, (mp_ok)
         or a
         jr z, mn_r1
@@ -790,9 +938,10 @@ mn_text:  db 0x71, 0x06, 0x34, 0x03    ; on (7,6,1) yellow, off (3,3,4)
 mn_arrow: db 0x71, 0x06, 0x00, 0x00    ; on yellow, off black (hidden)
 
 ; one vertical blank: S#0 bit7 (R#15 = 0), cleared by the read. Meanwhile
-; the MOD goes up to the MoonSound a unit (1-2 ms) at a time: the scan of
-; its patterns, the tone headers, the samples; 1.6 s in all, so it is
-; usually there before a language is chosen (without a MoonSound,
+; the MOD goes up to the MoonSound a unit (1-2 ms) at a time: the tone
+; headers, then the samples; done ~2.0 s after the menu shows (openMSX,
+; Star Wars' 252 KB), so it is usually there before a language is chosen
+; (without a MoonSound,
 ; mod_upload_step has nothing to do). Changes AF, BC, DE, HL, IY.
 wait_frame:
         in a, (VDP_CTRL)
@@ -847,38 +996,50 @@ key_row:                            ; A = row; returns its keys, 1 = down
 ; The SCC also lives in page 2, so its writes of a tick are buffered in RAM
 ; and applied with the SCC's slot switched in (ENASLT), then ours back.
 ;
-; The MOD (geo3d_modplay.asm; the MOD and the player's tables after the
-; music data, placed by modplay.py): when music_detect finds an OPL4, the
-; MOD player's own detection (the MOD's header, the sample RAM its samples
-; need) and the upload of its samples run while the language menu waits for
-; its blanks (wait_frame, mod_upload_later; what is left when a language is
-; chosen goes up before the crawl), and not at power on, so the menu shows
-; as early as without it. With the MoonSound for the MOD (mp_ok) the target
-; becomes 3 when the menu ends. The MUSIC opcode then asks for the song
-; (mod_go), which starts right after the next page flip (mod_start takes
-; ~6 ms: behind the black screen before the crawl it would make the first
-; flip a frame late) and sets mus_hook = JP mod_poll; demo_init stops it
-; (mod_stop) and sets mus_hook back to RET. The old engine's music_tick has
-; nothing to do then (mus_on = 0).
-;   mus_hook  3 bytes of RAM: RET (set by init) or JP mod_poll. Called
-;             wherever the player waits or runs long: every poll of the page
-;             flip's wait (fl_wait, between the decoder's tokens), of geo3d's
-;             RUN (op_waitgeo) and of the command engine (wait_ce, R#15 = 2),
-;             before every opcode (interp) and between two tokens of the
-;             decoder (not before fl_wait's single token). At most ~0.5 ms
-;             between two polls on the crawl (run_rom_z80.py --moonsound), so
-;             a tick is played within ~0.5 ms of its timer. A VRAM upload
-;             (VRLE) has no poll inside: none runs while the MOD plays (the
-;             crawl's come before its MUSIC opcode), and the setups that
-;             have them keep their speed (27 T per RLE run would make tex's
-;             texture frame late). mod_poll keeps every register but AF
-;             (no caller keeps a value in A or the flags across it), leaves
-;             page 2 on bank curbank (mp_restbank) and does not touch the
-;             VDP; a poll's work (a tick's writes, or a piece of working out
-;             the next tick) takes at most ~6.5k T, so the flip after a
-;             blank waits for that or for a decoder token (up to ~6.5k T),
-;             never both, within the ~11k T of the blank. With RET, a poll
-;             costs 27 T; with nothing to do, JP mod_poll about 70 T.
+; The MOD (geo3d_modplay.asm; the whole MOD and the player's tables after
+; the music data, placed by modplay.py): when music_detect finds an OPL4,
+; the MOD player's own detection (the MOD's header, the sample RAM its
+; samples need) and the upload of its samples run while the language menu
+; waits for its blanks (wait_frame, mod_upload_later; what is left when a
+; language is chosen goes up before the crawl), and not at power on, so the
+; menu shows as early as without it. With the MoonSound for the MOD (mp_ok)
+; the target becomes 3 when the menu ends. The first crawl's MUSIC opcode
+; then asks for the song (mod_go), which starts right after the next page
+; flip (mod_start takes ~6 ms: behind the black screen before the crawl it
+; would make the first flip a frame late); from there it plays for good,
+; looping at the song's end (ProTracker's restart): demo_init does not stop
+; it and a MUSIC finds it playing (mod_live). The old engine's music_tick
+; has nothing to do then (mus_on = 0). mod_go1 points three RAM hooks
+; (RET until then: the ROM runs as without a MoonSound, the same port
+; traffic in the same time) at the MOD player:
+;   mus_hook  JP mod_tpoll: before every opcode (interp), between two
+;             tokens of the decoder, inside the uploads (op_vrle_f): a tick
+;             that is due, 33 T (and the CALL) when none is.
+;   hw_hook   JP mod_hw: the waits for geo3d's RUN (op_waitgeo) and for the
+;             command engine (wait_ce, whose loop reads S#2): a tick that is
+;             due, and one token more of the block (dz_idle), which the
+;             hardware's time decodes ahead for the frames to come.
+;   idle_hook JP mod_poll: the page flip's wait (fl_wait, between the
+;             decoder's tokens): the work of the next tick too, a piece a
+;             poll (a row read, a channel), so a tick's notes need only
+;             their key ons when it is due.
+; The uploads (VRLE, VMORE) run in op_vrle_f then, in about 70 % of
+; op_vrle's time, with a poll every few RLE codes: what that saves pays for
+; the MOD's work, so the frames whose length the upload sets (the black
+; screens, tex's texture frame) end no later than without the MOD, and
+; the flips paced by PACE stay on their blanks. That holds for a MOD whose
+; work fits: build_rom.py measures the MOD's work per tick (modcost.py) and
+; takes the MOD only if its heaviest stretch fits in the time each frame
+; has to spare (openMSX, the MOD player's hooks without its work). In the
+; frames an upload makes long (each demo's black screen, tex's textures) an
+; EAGER has the busy code's polls work out the next tick at once (mod_poll):
+; their notes keep their time. With Star Wars (run_rom_z80.py --moonsound
+; --cycles 3): a tick is played within ~4.8 ms of its timer (0.65 ms for
+; 99 % of them), a key on within ~5 ms (openMSX, 230 s: 2.2 ms), none is
+; lost; the longest time between two polls is ~6.4 ms.
+; The hooks keep every register but AF (no caller keeps a value in A or
+; the flags across them), leave page 2 on bank curbank (mp_restbank) and
+; do not touch the VDP.
 
 music_detect:
         call mod_reset              ; the MOD player: nothing to play or upload
@@ -1104,19 +1265,34 @@ music_start:
 ms_on:  ld a, 1
         ld (mus_on), a
         ret
-ms_mod: ld a, 1                     ; the MOD from its first tick, right after
-        ld (mod_go), a              ; the next page flip (mod_go1)
+ms_mod: ld a, (mod_live)            ; the MOD from its first tick, right after
+        or a                        ; the next page flip (mod_go1); when the
+        ret nz                      ; sequence comes round again it plays on
+        inc a
+        ld (mod_go), a
         ret
 
 mod_go1:                            ; the MOD starts (the upload ended with the menu)
-        push hl
+        push hl                     ; and plays for good
         xor a
         ld (mod_go), a
         call mod_start
-        ld hl, mod_poll
+        ld hl, mod_tpoll            ; where the CPU is busy: its ticks
         ld (mus_hook + 1), hl
+        ld hl, mod_poll             ; where it waits for a blank: the work
+        ld (idle_hook + 1), hl      ; of the next tick too
+        ld hl, mod_hw               ; where it waits for geo3d or the command
+        ld (hw_hook + 1), hl        ; engine: its ticks, and the block ahead
+        ld hl, op_vrle_f
+        ld (vrle_jp + 1), hl
+        ld hl, op_vmore_f
+        ld (vmore_jp + 1), hl
         ld a, 0xC3
-        ld (mus_hook), a            ; JP mod_poll: every wait polls its timer
+        ld (mus_hook), a            ; JP: every wait polls its timer
+        ld (hw_hook), a
+        ld (idle_hook), a
+        ld a, 1
+        ld (mod_live), a
         pop hl
         ret
 
@@ -1129,9 +1305,7 @@ music_stop:
         ld a, (mus_target)
         cp 1
         jr z, mstop_scc
-        cp 3
-        jr z, mstop_mod
-        cp 2
+        cp 2                        ; (3: the MOD plays on, through every demo)
         ret nz
         ld e, 0                     ; OPL: key off all 18 channels
 mstop_o:
@@ -1155,11 +1329,6 @@ mstop_scc:
         xor a
         ld (0x988F), a              ; all SCC channels off
         jp slot_back
-mstop_mod:
-        ld a, 0xC9
-        ld (mus_hook), a            ; RET: no polls until the next start
-        jp mod_stop
-
 psg_silence:
         ld a, 7
         out (PSG_A), a
@@ -1468,7 +1637,7 @@ wait_ce:                            ; S#2 bit0 = CE; leaves R#15 = 0
 wc1:    in a, (VDP_CTRL)
         rrca
         jr nc, wc2
-        call mus_hook
+        call hw_hook                ; (S#2 is selected: no hook reads the VDP)
         jr wc1
 wc2:    xor a
         ld b, 15
@@ -1536,6 +1705,202 @@ window_regs:
 clear_cmd:
         dw 0, 0, 256, 512           ; DX, DY, NX, NY
         db 0x00, 0x00, 0xC0         ; CLR, ARG, HMMV
+
+; ----------------------------------------------------------------------------
+; VRLE and VMORE while the MOD plays (vrle_jp and vmore_jp lead here from
+; mod_go1 on): the same port traffic as op_vrle and op_vmore, in about 70 %
+; of their time, with polls inside. The MOD's own work (about 15 % of the
+; CPU) would otherwise make the long uploads longer (the setups behind the
+; black screens, tex's texture frame: 0.4-0.8 s), and without polls it
+; would lose ticks in them. A literal of n bytes jumps into unrolled OUTIs
+; (18 T a byte and 71 T a code, against OTIR's 23 and 105), a run into
+; unrolled OUT (C),As (14 T a byte and 104 T a code, against 26 and 107):
+; both slower than the V99x8 takes VRAM writes with sprites off (its longest
+; wait for an access slot, 76 VDP cycles, is 12.7 T). A poll every VF_RUNS
+; runs, and one in each literal of 128 bytes (a literal only follows one of
+; 128 bytes): usually well under 1 ms apart, ~6 ms at most (runs of 129
+; bytes in a row). Registers in the loop: HL the data, E the
+; end's low byte (vf_endh the high one), D runs until the next poll, C the
+; VDP's data port, IXH / IYH the pages of the two tables (IXL / IYL the
+; entry: the code's complement).
+VF_RUNS:    equ 8
+
+op_vrle_f:
+        ld a, (dz_end)              ; (as op_vrle)
+        or a
+        jr nz, vf_adr
+        push hl
+        inc hl
+        inc hl
+        inc hl
+        ld c, (hl)
+        inc hl
+        ld b, (hl)
+        ld hl, 5
+        add hl, bc
+        ld b, h
+        ld c, l
+        pop hl
+        call dz_need
+vf_adr: ld e, (hl)                  ; A7..A0
+        inc hl
+        ld d, (hl)                  ; A15..A8
+        inc hl
+        ld a, (hl)                  ; A17..A16
+        inc hl
+        add a, a
+        add a, a
+        ld b, a
+        ld a, d
+        rlca
+        rlca
+        and 3
+        or b
+        out (VDP_CTRL), a
+        ld a, 0x80 + 14
+        out (VDP_CTRL), a
+        ld a, e
+        out (VDP_CTRL), a
+        ld a, d
+        and 0x3F
+        or 0x40
+        out (VDP_CTRL), a
+op_vmore_f:                         ; (VMORE: its length is where the VRLE's is)
+        ld e, (hl)
+        inc hl
+        ld d, (hl)                  ; DE = packed length
+        inc hl
+        ld a, d
+        or e
+        jp z, interp
+        ex de, hl
+        add hl, de                  ; HL = the end
+        ld a, h
+        ld (vf_endh), a
+        ld a, l
+        ex de, hl
+        ld e, a
+        ld d, VF_RUNS
+        ld c, VDP_DATA
+        ld a, vf_lit / 256
+        ld ixh, a
+        ld a, vf_run / 256
+        ld iyh, a
+        jp vf_next
+
+vf_o8:  macro
+        outi
+        outi
+        outi
+        outi
+        outi
+        outi
+        outi
+        outi
+        endm
+vf_c8:  macro
+        out (c), a
+        out (c), a
+        out (c), a
+        out (c), a
+        out (c), a
+        out (c), a
+        out (c), a
+        out (c), a
+        endm
+
+        ; the literals: code k (n = k + 1 bytes) enters at xx01h + 254 - 2k,
+        ; so that n OUTIs follow (xx01h: 128 bytes, a poll after the first)
+        ds (0xF9 - ($ & 0xFF)) & 0xFF, 0
+vf_l128:
+        outi
+        call mus_hook
+        jp vf_lit + 2
+vf_lit: jr vf_l128                  ; (at xx01h)
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        vf_o8
+        outi
+        outi
+        outi
+        outi
+        outi
+        outi
+        outi
+vf_next:                            ; the next code: the end? a literal? a run?
+        ld a, l
+        cp e
+        jr z, vf_end1
+vf_go:  ld a, (hl)
+        inc hl
+        add a, a
+        jr c, vf_r
+        cpl                         ; a literal
+        ld ixl, a
+        jp (ix)
+vf_r:   cpl                         ; a run: code 80h + k (n = k + 2 bytes)
+        ld iyl, a                   ; enters at yy01h + 256 - 2k
+        ld a, (hl)
+        inc hl
+        jp (iy)
+vf_end1:
+        ld a, (vf_endh)             ; the end's low byte: the end?
+        cp h
+        jp z, interp
+        jr vf_go
+
+        ; the runs: 129 OUT (C),A from yy01h
+        ds (0x01 - ($ & 0xFF)) & 0xFF, 0
+vf_run: vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        vf_c8
+        out (c), a
+        dec d                       ; (after a run) a poll every VF_RUNS runs
+        jr z, vf_poll
+vf_n2:  ld a, l                     ; then as vf_next
+        cp e
+        jr z, vf_end2
+vf_go2: ld a, (hl)
+        inc hl
+        add a, a
+        jp c, vf_r
+        cpl
+        ld ixl, a
+        jp (ix)
+vf_end2:
+        ld a, (vf_endh)
+        cp h
+        jp z, interp
+        jr vf_go2
+vf_poll:
+        ld d, VF_RUNS
+        call mus_hook
+        jr vf_n2
 
         include "geo3d_modplay.asm"
         include "rom_tables.asm"

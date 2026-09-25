@@ -29,14 +29,31 @@ by decoding that block again. What a demo does up to its first page flip
 (RAW_SETUP: the uploads behind the black screen and the first frame; the
 menu's picture) and the setup frames of the loop demos (RAW_SETUP_FRAMES)
 stay raw: the player reads them straight from ROM, as fast as before the
-compression. The music data follows, uncompressed. The parse of each block
-is cached in rom/out/g3lz/.
+compression. Raw ops are stored once (Rom): the demos upload some of the
+same textures and tables (tex, panzoom and flyin 21 KB of textures, faces
+to flyin 3 KB of geo3d tables, the three crawls 4 KB of uploads and
+tables: 59 KB in all), and a run of raw ops a stream placed earlier
+already has in ROM is run from there by a CALL; a VRLE that meets a bank's
+end goes on in the next bank as VMORE, so raw blocks leave no gaps. Each
+costs the player a few hundred T-states (0.2 ms), so the raw setups keep
+their speed: every black screen and page flip falls on the same vertical
+blank as with the uncompressed ROM (openMSX). The music data follows,
+uncompressed. The parse of each block is cached in rom/out/g3lz/.
 
-A MOD goes in as a MOD (modplay.py): the part of the file the crawl plays
-(its header, the patterns and the samples those positions use, the file's
-own bytes) and the lookup tables of the MOD player in geo3d_modplay.asm,
-after the converted music (rom_mod.asm has where). A MoonSound with the
-sample RAM for its samples plays the MOD; the conversion is the fallback.
+A MOD goes in as a MOD (modplay.py): the whole song (its header, every
+pattern it reaches and the samples those positions name, the file's own
+bytes), which the MoonSound plays from the first crawl on, over and over
+through every demo, and the lookup tables of the MOD player in
+geo3d_modplay.asm, after the converted music (rom_mod.asm has where). A
+MoonSound with the sample RAM for its samples plays the MOD; else the
+conversion plays in the crawl. While the MOD plays, the player's uploads
+are faster (op_vrle_f), which pays for the MOD's work: the frames whose
+length an upload sets (the black screens, tex's texture frame) end no
+later than in the uncompressed ROM and the other flips stay on their
+blanks, if the MOD's work fits in the time each frame has to spare. The
+build measures that work (modcost.py: the MOD player in the Z80 emulator,
+MSX M1 waits counted, tick by tick) and takes the MOD only if its
+heaviest stretch fits (FRAME_SLACK); else only the conversion plays.
 
 Usage: build_rom.py [--base 0x88|0x98] [--music FILE.mid|FILE.mod]
   --base 0x88  (default) real hardware, V9968 cartridge at 88h: GEO3D.ROM
@@ -46,9 +63,16 @@ Usage: build_rom.py [--base 0x88|0x98] [--music FILE.mid|FILE.mod]
   --music      MIDI or ProTracker MOD (told apart by content) played from the
                start of the crawl (music.py converts it for PSG, SCC + PSG
                and OPL4/OPL3 FM + PSG; the player uses the best chip it
-               finds; a MOD plays as a MOD on a MoonSound's wave part). Keep
-               music you do not own out of the repository; without --music
-               the ROM is silent.
+               finds; a MOD plays as a MOD on a MoonSound's wave part, the
+               whole song, looping). Keep music you do not own out of the
+               repository; without --music the ROM is silent.
+  --mod-passes the looping MOD's passes its model covers (the checks, and
+               the ticks run_rom_z80.py compares): at least this many
+               (default 3) and at least MOD_SECONDS (600 s)
+  --mod-unchecked  take a MOD whose work does not fit (a test ROM only)
+  --null-mod [2]   a measure for modcost.py --measure-frames (not a ROM to
+               use): the MOD player's hooks without any tick (2: and nothing
+               decoded ahead)
 """
 import argparse
 import hashlib
@@ -65,6 +89,7 @@ sys.path.insert(0, os.path.join(ROOT, "showcase"))
 sys.path.insert(0, Z80)
 
 import g3lz  # noqa: E402
+import modcost  # noqa: E402
 import modplay  # noqa: E402
 import music  # noqa: E402
 import showcase  # noqa: E402
@@ -84,10 +109,32 @@ RAW_SETUP_FRAMES = True
 # (crawl 0.75 -> 1.23 s, panzoom 0.42 -> 0.67 s, flyin 0.65 -> 1.02 s).
 RAW_SETUP = True
 LOOPS = {"wire": 2, "faces": 2, "tex": 2, "panzoom": 2, "flyin": 2}
+# The frames whose length an upload sets, not PACE (besides each demo's frame
+# 0, the black screen behind its setup): tex's frame 1, its textures. An
+# EAGER starts each of them and each demo's frame 0: while the MOD plays,
+# its polls there work out its next tick at once, so its notes keep their
+# time (the flip's wait, where they would, is far off).
+UPLOAD_FRAMES = {"tex": [1]}
+# The first frames of a block decoded between two page flips (a block that
+# starts after a stream's first FLIP) are parsed for speed (g3lz fast_len):
+# the block before it is decoded to its end by then, so these frames decode
+# their ops on demand. flyin's frames after a new block took 16-20 ms of
+# decoding each (short matches: ~110 T a byte); with the MOD's work on top
+# (a row with notes: up to ~9 ms) that was too close to a late flip. Parsed
+# for speed over 3 frames they take 4-9 ms; the ROM grows by 3.5 KB.
+FAST_FRAMES = 3
+MOD_PASSES = 3                               # the MOD's passes the model covers (checks, harness), at least,
+MOD_SECONDS = 600                            # and at least this long (run_rom_z80.py --cycles 3: ~420 s)
 
 OP_END, OP_GEO, OP_GEOD, OP_VREG, OP_VIND, OP_WAITGEO, OP_WAITCE = range(7)
 OP_VRLE, OP_FLIP, OP_MARK, OP_LOOP, OP_NEXTBLOCK, OP_MENU, OP_PACE, OP_MUSIC = range(7, 15)
+OP_CALL, OP_VMORE, OP_EAGER = 15, 16, 17
 MUS_NEXTBANK = 0xFE                          # music data: continue in the next bank
+# Raw ops a CALL may run from another place in ROM (no page flip, no control
+# flow: the player comes back at the end of the ops called)
+CALL_KINDS = {OP_GEO, OP_GEOD, OP_VREG, OP_VIND, OP_WAITGEO, OP_WAITCE, OP_VRLE, OP_PACE}
+MIN_CALL = 64                                # bytes a CALL must save (each costs 6, ~0.1 ms)
+MIN_PART = 64                                # a VRLE is cut at a bank's end only if this much fits
 
 # menu order = player's menu_sel (0, 1, 2) = lang_tables order
 LANGS = [("en", "English"), ("es", "Español"), ("pt", "Português")]
@@ -322,6 +369,19 @@ def encode(items):
     return ops
 
 
+def with_eager(ops, frames):
+    """ops with EAGER at the start of each frame in frames (0: the stream's
+    first op; k: right after its k-th FLIP)"""
+    out, frame = [], 0
+    for op in ops:
+        if frame in frames and (frame == 0 and not out or out and out[-1][0] == OP_FLIP):
+            out.append(bytes([OP_EAGER]))
+        out.append(op)
+        if op[0] == OP_FLIP:
+            frame += 1
+    return out
+
+
 def op_len(s, q):
     """length of the op at s[q]"""
     k = s[q]
@@ -333,9 +393,25 @@ def op_len(s, q):
         return 3
     if k == OP_VRLE:
         return 6 + (s[q + 4] | s[q + 5] << 8)
+    if k == OP_VMORE:
+        return 3 + (s[q + 1] | s[q + 2] << 8)
+    if k == OP_CALL:
+        return 6
     if k in (OP_FLIP, OP_MARK, OP_PACE):
         return 2
     return 1
+
+
+def rle_cut(packed, room):
+    """the most bytes of whole RLE codes at the start of `packed` that fit
+    in `room` (a VRLE cut there goes on as VMORE)"""
+    q = 0
+    while q < len(packed):
+        n = 2 + packed[q] if packed[q] < 0x80 else 2
+        if q + n > room:
+            break
+        q += n
+    return q
 
 
 class Blocks:
@@ -402,38 +478,76 @@ def split_ops(s):
 
 def player_view(rom, bank, addr):
     """A stream as the player reads it from the ROM image: block after block
-    (G3LZ or raw, bank escapes followed) up to the one that does not end with
-    NEXTBLOCK. -> its ops without the NEXTBLOCKs. Checks that a G3LZ block
-    fits dz_buf and that MARK is the last op of its block."""
+    (G3LZ or raw, bank escapes followed, each CALL's ops read where it
+    points) up to the one that does not end with NEXTBLOCK. -> its ops
+    without the NEXTBLOCKs, each VRLE that a bank's end cut joined again with
+    its VMOREs. Checks that a G3LZ block fits dz_buf and has no CALL or
+    VMORE, that MARK is the last op of its block, that a CALL runs whole raw
+    ops of one bank (no NEXTBLOCK, page flip or control flow among them),
+    that a VMORE follows its VRLE's part (no port write between them: they
+    send what the VRLE did) and that each part is whole RLE codes."""
     pos, out = bank * BANK + addr - 0x8000, []
     while True:
         pos = g3lz.skip_bank(rom, pos, BANK)
         if rom[pos] == 0 and rom[pos + 1] == g3lz.ESC_RAW:
-            q = pos + 2
-            while rom[q] not in (OP_NEXTBLOCK, OP_END, OP_MENU):
-                q += op_len(rom, q)
-            assert pos // BANK == q // BANK, "a raw block across banks"
-            blk, pos = rom[pos + 2:q + 1], q + 1
+            q, ops = pos + 2, []
+            while True:
+                op = bytes(rom[q:q + op_len(rom, q)])
+                q += len(op)
+                if op[0] == OP_CALL:
+                    b, s, e = op[1], op[2] | op[3] << 8, op[4] | op[5] << 8
+                    assert 0x8000 <= s < e <= 0xC000, "CALL"
+                    called = split_ops(rom[b * BANK + s - 0x8000:b * BANK + e - 0x8000])
+                    assert all(c[0] in CALL_KINDS or (i == 0 and c[0] == OP_VMORE)
+                               for i, c in enumerate(called)), "CALL"
+                    ops += called
+                else:
+                    ops.append(op)
+                if op[0] in (OP_NEXTBLOCK, OP_END, OP_MENU):
+                    break
+            assert pos // BANK == (q - 1) // BANK, "a raw block across banks"
+            pos = q
         else:
             blk, pos = g3lz.decompress(rom, pos, BANK)
             assert len(blk) <= BLOCK
-        ops = split_ops(blk)
+            ops = split_ops(blk)
+            assert not any(op[0] in (OP_CALL, OP_VMORE) for op in ops), "CALL or VMORE in a G3LZ block"
         marks = [i for i, op in enumerate(ops) if op[0] == OP_MARK]
         assert not marks or (marks == [len(ops) - 2] and ops[-1][0] == OP_NEXTBLOCK), "MARK"
         if ops[-1][0] != OP_NEXTBLOCK:
-            return out + ops
+            return join_vmore(out + ops)
         out += ops[:-1]
 
 
-def fast_len(blk):
+def join_vmore(ops):
+    """VRLE, VMORE... -> the one VRLE they send"""
+    out = []
+    for op in ops:
+        if op[0] in (OP_VRLE, OP_VMORE):
+            data = op[6:] if op[0] == OP_VRLE else op[3:]
+            assert rle_cut(data, len(data)) == len(data), "an RLE code cut in two"
+        if op[0] == OP_VMORE:
+            assert out and out[-1][0] == OP_VRLE, "VMORE without its VRLE"
+            data = out[-1][6:] + op[3:]
+            out[-1] = out[-1][:4] + bytes([len(data) & 0xFF, len(data) >> 8]) + data
+        else:
+            out.append(op)
+    return out
+
+
+def fast_len(blk, frames=None):
     """the bytes of a hot block decoded on demand: its ops up to its first
-    FLIP, plus the player's lookahead (g3lz parses them for speed)"""
+    FAST_FRAMES FLIPs, plus the player's lookahead (g3lz parses them for
+    speed)"""
+    frames = FAST_FRAMES if frames is None else frames
     q = 0
     while q < len(blk):
         k = blk[q]
         q += op_len(blk, q)
         if k == OP_FLIP:
-            break
+            frames -= 1
+            if frames == 0:
+                break
     return q + AHEAD
 
 
@@ -456,10 +570,26 @@ def g3lz_block(blk, fast):
 
 class Rom:
     """ROM banks from bank `first` on: the compressed streams (a token or a
-    raw block never crosses a bank: the escape 00 01 goes on at 8000h of the
-    next one), then plain data (music) with an end-of-bank opcode."""
+    raw op never crosses a bank: the escape 00 01 goes on at 8000h of the
+    next one), then plain data (music) with an end-of-bank opcode.
+
+    Raw blocks fill the banks: a VRLE that does not fit before a bank's end
+    is cut there (whole RLE codes) and goes on as VMORE in the next bank; an
+    op already in ROM, in a run of raw ops a stream placed earlier (another
+    demo's upload of the same texture or table, or this stream's), is not
+    placed again: a CALL runs that run where it is (one CALL per piece of it
+    that has no NEXTBLOCK or bank end inside). Both cost the player a few
+    hundred T-states where a raw op costs thousands: the raw setups keep the
+    speed they had uncompressed."""
+    RESERVE = 3                                  # NEXTBLOCK and 00 01 always fit after an op
+
     def __init__(self, first):
         self.banks, self.first = [bytearray()], first
+        self.mat = []            # raw ops placed a CALL may run: [op, [(bank, first, end)], follows the previous]
+        self.index = {}          # op -> its indices in mat
+        self.chain = False       # the next op placed follows mat[-1] in its stream
+        self.open = False        # inside a raw piece (00 02 written)
+        self.stats = dict(calls=0, called=0, vmore=0)
 
     def here(self):
         return self.first + len(self.banks) - 1, 0x8000 + len(self.banks[-1])
@@ -476,36 +606,120 @@ class Rom:
             self.next_bank()
         self.banks[-1] += t
 
+    def _put(self, op):
+        """one op into the raw block being placed -> where its bytes went,
+        [(bank, first, end)] (two or more pieces for a VRLE cut by a bank's
+        end: the VRLE's part, then VMORE)"""
+        cut = op[0] in (OP_VRLE, OP_VMORE)
+        segs = []
+        while True:
+            if not self.open:                        # 00 02, where the op (or its cut) fits
+                need = len(op)
+                if cut and len(op) > 6:              # the header, and enough RLE codes for a cut
+                    hdr = 6 if op[0] == OP_VRLE else 3
+                    code = 2 + op[hdr] if op[hdr] < 0x80 else 2
+                    need = min(need, hdr + max(MIN_PART, code))
+                assert need <= BANK - 2 - 2 - self.RESERVE, f"op of {len(op)} bytes"
+                if self.room() - 2 - self.RESERVE < need:
+                    self.next_bank()
+                self.banks[-1] += bytes([0, g3lz.ESC_RAW])
+                self.open = True
+            room = self.room() - self.RESERVE
+            if len(op) <= room:
+                bank, at = self.here()
+                self.banks[-1] += op
+                return segs + [(bank, at, at + len(op))]
+            hdr = 6 if op[0] == OP_VRLE else 3
+            k = rle_cut(op[hdr:], room - hdr) if cut and room - hdr >= MIN_PART else 0
+            if k:
+                part = op[:hdr - 2] + bytes([k & 0xFF, k >> 8]) + op[hdr:hdr + k]
+                rest = op[hdr + k:]
+                bank, at = self.here()
+                self.banks[-1] += part
+                segs.append((bank, at, at + len(part)))
+                op = bytes([OP_VMORE, len(rest) & 0xFF, len(rest) >> 8]) + rest
+                self.stats["vmore"] += 1
+            self.banks[-1].append(OP_NEXTBLOCK)      # on in the next bank
+            self.next_bank()
+            self.open = False
+
+    def _match(self, ops, i):
+        """the longest run of placed raw ops equal to ops[i:] -> (index in
+        mat, ops, bytes)"""
+        best = None
+        for k in self.index.get(ops[i], ()):
+            n, size = 1, len(ops[i])
+            while (i + n < len(ops) and k + n < len(self.mat) and self.mat[k + n][2]
+                   and self.mat[k + n][0] == ops[i + n]):
+                size += len(ops[i + n])
+                n += 1
+            if best is None or size > best[2]:
+                best = (k, n, size)
+        return best
+
     def raw(self, blk, last=False):
-        """a raw block (it ends with NEXTBLOCK, or it is the stream's last),
-        in pieces that fill the banks: each one 00 02, whole ops, NEXTBLOCK
-        (the block's own for the last; none after the last block's last op,
-        END or MENU)"""
-        q, end = 0, len(blk) - (0 if last else 1)
-        while q < end:
-            e = q
-            while e < end and e + op_len(blk, e) - q <= self.room() - 5:
-                e += op_len(blk, e)
-            if e == q:                               # not even one op fits here
-                self.next_bank()
-                continue
-            self.banks[-1] += (bytes([0, g3lz.ESC_RAW]) + blk[q:e]
-                               + (bytes([OP_NEXTBLOCK]) if not (last and e == end) else b""))
-            q = e
+        """a raw block (it ends with NEXTBLOCK, or it is the stream's last):
+        its ops (CALLs for the runs already in ROM, see the class), then its
+        NEXTBLOCK (none after the last block's last op, END or MENU)"""
+        ops = split_ops(blk)
+        if not last:
+            assert ops[-1][0] == OP_NEXTBLOCK
+            ops = ops[:-1]
+        i = 0
+        while i < len(ops):
+            m = self._match(ops, i) if ops[i][0] in CALL_KINDS else None
+            if m:
+                k, n, size = m
+                segs = []                            # the run's pieces in ROM, merged
+                for op, sg, _ in self.mat[k:k + n]:
+                    for b, s, e in sg:
+                        if segs and segs[-1][0] == b and segs[-1][2] == s:
+                            segs[-1] = (b, segs[-1][1], e)
+                        else:
+                            segs.append((b, s, e))
+                if size - 6 * len(segs) >= MIN_CALL:
+                    for b, s, e in segs:
+                        self._put(bytes([OP_CALL, b, s & 0xFF, s >> 8, e & 0xFF, e >> 8]))
+                    self.stats["calls"] += len(segs)
+                    self.stats["called"] += size
+                    self.chain = False
+                    i += n
+                    continue
+            segs = self._put(ops[i])
+            if ops[i][0] in CALL_KINDS:
+                self.index.setdefault(ops[i], []).append(len(self.mat))
+                self.mat.append((ops[i], segs, self.chain))
+                self.chain = True
+            else:
+                self.chain = False
+            i += 1
+        if not last:
+            assert self.open and self.room() >= self.RESERVE
+            self.banks[-1].append(OP_NEXTBLOCK)
+        self.open = False
 
     def stream(self, bl):
         """-> (bank, address) of the stream's first block"""
-        items = [(True, bytes(blk)) if raw else
-                 (False, g3lz.split(g3lz_block(bytes(blk), fast_len(blk) if hot else 0)))
-                 for blk, hot, raw in zip(bl.blocks, bl.hot, bl.raw)]
+        items = []
+        for blk, hot, raw in zip(bl.blocks, bl.hot, bl.raw):
+            if raw and items and items[-1][0] and split_ops(items[-1][1])[-2][0] != OP_MARK:
+                # raw after raw: one raw block (a raw block needs no dz_buf; a
+                # NEXTBLOCK less to run, and a CALL can run ops of both)
+                items[-1] = (True, items[-1][1][:-1] + bytes(blk))
+            elif raw:
+                items.append((True, bytes(blk)))
+            else:
+                items.append((False, g3lz.split(g3lz_block(bytes(blk), fast_len(blk) if hot else 0))))
         raw, it = items[0]
-        if self.room() < (op_len(it, 0) + 5 if raw else len(it[0]) + 2):
+        if self.room() < (2 + 6 + MIN_PART + self.RESERVE if raw else len(it[0]) + 2):
             self.banks.append(bytearray())           # the demo table points at a block
         at = self.here()
+        self.chain = False
         for i, (raw, it) in enumerate(items):
             if raw:
                 self.raw(it, i == len(items) - 1)
             else:
+                self.chain = False
                 for t in it:
                     self.token(t)
         return at
@@ -525,6 +739,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", type=lambda x: int(x, 0), default=0x88, choices=sorted(PROFILES))
     ap.add_argument("--music", help="MIDI or MOD file for the crawl")
+    ap.add_argument("--null-mod", type=int, nargs="?", const=1, default=0, choices=(1, 2),
+                    help="a measure (modcost.py --measure-frames): the MOD player's hooks, uploads and polls as "
+                         "with the MOD, but timer 2 never starts, so it never plays a tick (2: and nothing "
+                         "decoded ahead); not a ROM to use")
+    ap.add_argument("--mod-passes", type=int, default=MOD_PASSES,
+                    help="passes of a looping MOD the model covers (the checks and run_rom_z80.py), at least; "
+                         f"and at least {MOD_SECONDS} s")
+    ap.add_argument("--mod-unchecked", action="store_true",
+                    help="take a MOD whose work does not fit (modcost.py): a test ROM, whose black screens or "
+                         "frames may be late, not one to use")
     args = ap.parse_args()
     base = args.base
     rom_name = PROFILES[base]
@@ -560,19 +784,31 @@ def main():
     s, b = from_show(sh)
     demos.append(("flyin", logo_pal, s, b, LOOPS["flyin"]))
 
-    # a MOD also as a MOD, for a MoonSound (modplay.Song): the part of it the
-    # crawl plays, as long as the conversion, with the same fade; the MOD
-    # player's lookup tables (one bank's worth) first in bank 1
+    # a MOD also as a MOD, for a MoonSound (modplay.Song): the whole song,
+    # looping; the MOD player's lookup tables (one bank's worth) first in bank 1
     nticks = min(crawl_blanks.values())
     song = None
     if args.music and music.mod_channels(open(args.music, "rb").read()) is not None:
         try:
-            song = modplay.Song(args.music, nticks / music.VBLANK_HZ, 180 / music.VBLANK_HZ)
+            song = modplay.Song(args.music, loop=True, passes=args.mod_passes, min_seconds=MOD_SECONDS)
         except ValueError as e:
             print(f"MOD: the MoonSound's MOD player can not play it ({e}): only the conversion")
+    if song:
+        # its work must fit in the time the demos' frames have to spare
+        cost = modcost.measure(song, OUT)
+        fits, report, _ = modcost.fit(song, cost)
+        print(f"MOD: work per tick (MSX clock cycles, modcost.py): {modcost.summary(cost)}")
+        for line in report:
+            print(f"MOD:   {line}")
+        if not fits and not args.mod_unchecked:
+            print("MOD: its work does not fit in the demos' frames (a black screen, a demo's start or a frame "
+                  "would be later than without it): only the conversion")
+            song = None
+        elif not fits:
+            print("MOD: --mod-unchecked: the MOD goes in all the same (a test ROM, not one to use)")
     pk = Rom(1)
     if song:
-        pk.banks[-1] += modplay.tables()
+        pk.banks[-1] += song.tab_blob()
     table, expect, blocks = [], {}, {}
     # the menu first: its picture on page 0, then MENU (it never returns)
     page, _ = menu_page()
@@ -587,7 +823,7 @@ def main():
     expect["menu"] = expand(menu_setup)
     for name, pal, setup, body, loops in demos:
         bl = Blocks()
-        for op in encode(setup):
+        for op in with_eager(encode(setup), [0] + UPLOAD_FRAMES.get(name, [])):
             bl.put(op)
         if body:
             bl.mark(loops)
@@ -604,9 +840,13 @@ def main():
     size_raw = sum(len(b) for _, bl in blocks.values() for b, r in zip(bl.blocks, bl.raw) if r)
     nblk = sum(len(bl.blocks) for _, bl in blocks.values())
     nraw = sum(sum(bl.raw) for _, bl in blocks.values())
-    packed = sum(map(len, pk.banks))
+    tab_len = len(song.tab_blob()) if song else 0     # (the MOD player's tables come first in bank 1)
+    packed = sum(map(len, pk.banks)) - tab_len
     print(f"fluxos: {size_all} bytes em {nblk} blocos ({nraw} crus: {size_raw} bytes) -> {packed} na ROM "
-          f"(G3LZ, {size_all / packed:.2f}x), bancos 1 a {len(pk.banks)}")
+          f"(G3LZ, {size_all / packed:.2f}x), bancos 1 a {len(pk.banks)}"
+          + (f", depois das tabelas do player do MOD ({tab_len} bytes)" if tab_len else ""))
+    print(f"  crus: {pk.stats['called']} bytes de ops já na ROM rodados por {pk.stats['calls']} CALLs, "
+          f"{pk.stats['vmore']} VRLEs cortados no fim de um banco (VMORE)")
     streams_end = pk.here()
     # music: one stream per target, as long as the shortest crawl (one tick
     # per vertical blank), fading out at its end
@@ -631,13 +871,17 @@ def main():
             pk.banks.append(bytearray())
             bank, addr = pk.here()
         mbanks, mod_equ = song.pack(bank, addr, tab=(1, 0x8000))
+        if args.null_mod:
+            mod_equ = mod_equ.replace("MP_NULL:        equ 0", f"MP_NULL:        equ {args.null_mod}")
+            print(f"MOD: --null-mod {args.null_mod}: timer 2 never starts (a measure, not a ROM to use)")
         pk.banks[-1] += mbanks[0]
         pk.banks.extend(bytearray(b) for b in mbanks[1:])
         mod_json = {"writes_start": song.writes_start, "writes": song.writes, "heads": song.heads,
                     "counts": song.counts, "ideal": song.times()[0], "t2_unit": modplay.T2_UNIT,
                     "seconds": song.seconds, "image_len": len(song.image),
                     "image_sha1": hashlib.sha1(song.image).hexdigest(), "blocks": song.rt.blocks,
-                    "used": song.used_channels(), "pans": song.pans}
+                    "used": song.used_channels(), "pans": song.pans, "loop": song.loop,
+                    "pass_starts": song.pass_starts if song.loop else None}
         print(f"MOD: {song.summary()}")
     else:
         mod_equ = modplay.no_mod_equ()
@@ -684,7 +928,7 @@ def main():
     open(os.path.join(OUT, rom_name), "wb").write(rom)
     json.dump({"demos": [d[0] for d in demos], "expect": expect, "table": table,
                "langs": [lang for lang, _ in LANGS], "tables": tables,
-               "music": music_ticks, "mod": mod_json},
+               "music": music_ticks, "mod": mod_json, "upload_frames": UPLOAD_FRAMES},
               open(os.path.join(OUT, "streams.json"), "w"))
     used = sum(len(bk) for bk in pk.banks)
     free = (ROM_BANKS - nb) * BANK + pk.room()
@@ -721,7 +965,7 @@ def mod_check(rom, song):
     """The MOD's data as geo3d_modplay.asm reads it from the ROM image: the
     lookup tables (in one bank) and the MOD (on through the banks)."""
     (tb, ta), (mb, ma) = song.packed["tables"], song.packed["mod"]
-    tab = modplay.tables()
+    tab = song.tab_blob()
     assert (ta - 0x8000) + len(tab) <= BANK and rom_bytes(rom, tb, ta, len(tab)) == tab, "MOD player tables"
     assert rom_bytes(rom, mb, ma, len(song.mod)) == song.mod, "MOD"
 
