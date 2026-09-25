@@ -1,0 +1,12 @@
+1 ' SPDX-License-Identifier: MIT
+2 ' Copyright (c) 2026 Alex Moncks
+10 ' H.CLEA taken by a ROM earlier in slot order (tests.tcl fakes one): the
+15 ' ROM is on without a work area
+20 ON ERROR GOTO 90
+30 MV=PEEK(&H2D):IF MV=3 THEN SCREEN 5
+35 OUT &H2E,10
+40 E=0:CALL G3INIT:OUT &H2F,E:OUT &H2E,130
+50 E=0:CALL G3END:OUT &H2F,E:OUT &H2E,131
+60 E=0:CALL G3FOO:OUT &H2F,E:OUT &H2E,132
+70 SCREEN 0:OUT &H2E,199:END
+90 E=ERR:OUT &H2F,ERR:OUT &H2F,ERL AND 255:OUT &H2F,ERL\256:OUT &H2E,250:RESUME NEXT

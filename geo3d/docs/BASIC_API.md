@@ -366,7 +366,7 @@ Erro: Illegal function call se p já estiver preso a outro objeto.
 | `G3BG(c [,p])` | fundo de cada quadro: cor, figura ou nada |
 
 **G3RAMP:**
-- `c` vai de 1 a 9, e r, g, b de 0 a 7. O tom k vale cor*(k+2)/8, arredondado.
+- `c` vai de 1 a 9, e r, g, b de 0 a 7. O tom k (0 a 6) vale cor*(k+1)/7, arredondado: são 7 tons diferentes, do mais escuro até a própria cor. (A fórmula anterior, cor*(k+2)/8, repetia tons; a paleta padrão do esqueleto já usa a nova.)
 - Registra c como rampa e desfaz o registro das rampas que ele sobrepõe.
 - No 98h, também grava na tabela de paleta do BASIC, então COLOR=RESTORE a mantém.
 - Em SCREEN 8, dá Illegal function call.
@@ -647,7 +647,10 @@ Chão xadrez, quatro cubos com uma textura feita com LINE, CIRCLE e PAINT, câme
 ## 7. Cuidados técnicos
 
 ### 7.1 V9968, SCREEN e modo texto
-- **O SCREEN do BASIC poderia desligar o modo V9968?** Não. A ROM escreve R#21 e R#20 com o PORT#4 destravado e trava de novo (PORT#4 = 80h). Com a trava, o V9968 ignora escritas em R#20/R#21, então SCREEN, COLOR e VDP()= não desligam o LRMM nem os 256 KB. Mesmo assim, a ROM atualiza as cópias RG20SAV/RG21SAV (FFF3h/FFF4h).
+- **O SCREEN do BASIC poderia desligar o modo V9968?** Não. A ROM escreve R#21 e R#20 com o PORT#4 destravado e trava de novo (PORT#4 = 80h). Com a trava, o V9968 ignora escritas em R#20/R#21, então SCREEN, COLOR e VDP()= não desligam o LRMM nem os 256 KB.
+  - O SCREEN do BASIC reescreve R#20 e R#21 a partir das cópias RG20SAV/RG21SAV (FFF3h/FFF4h); isso foi testado no turboR. Por isso, no 98h, a ROM mantém as cópias iguais ao que escreveu: o modo V9968 sobrevive ao SCREEN mesmo sem a trava.
+  - O fork do openMSX não emula a trava do PORT#4. Um programa que esquece de destravar funciona no emulador e falha no hardware; no emulador, só as cópias em RAM protegem o modo V9968.
+  - No 88h, FFF3h/FFF4h pertencem ao VDP da máquina, e a ROM não mexe nelas.
 - **SCREEN ou SET PAGE feitos pelo programa:** o G3FRAME relê SCRMOD e DPPAGE a cada quadro e reaplica o que precisar, sem apagar a cena.
 - **Efeitos visíveis do modo V9968 no BASIC:**
   - o VDP passa a informar ID 3;
@@ -670,7 +673,7 @@ Chão xadrez, quatro cubos com uma textura feita com LINE, CIRCLE e PAINT, câme
   - Leituras de S#2 (CE) acontecem em janelas curtas com as interrupções desligadas (DI, R#15 = 2, IN, R#15 = 0, EI), repetidas a cada volta do laço.
   - Toda escrita de dois bytes na porta 99h (registrador ou endereço de VRAM) também é feita com as interrupções desligadas.
 - **Tratador de CALL:** ele pode entrar com as interrupções desligadas (chamada entre slots). A ROM executa EI antes de qualquer espera; sem isso, o JIFFY para e a espera nunca acaba.
-- **Troca de página no 98h:** é feita por um trecho em RAM na página 3, encadeado em H.TIMI. Esse gancho roda no começo da interrupção, antes do PLAY e da música, e por isso cai dentro do branco.
+- **Troca de página no 98h:** é feita pelo gancho H.TIMI. Esse gancho roda no começo da interrupção, antes do PLAY e da música, e por isso cai dentro do branco. O gancho tem o formato CALLF (RST 30h para a ROM), não um JP para a RAM: o driver Kanji (CALL KANJI) e o DOS1 encadeiam o gancho anterior supondo o formato CALLF, e um gancho JP derrubou o FS-A1WSX no teste. Ele é instalado no primeiro G3INIT, não na partida, para que um programa sem 3D não pague nada por interrupção.
   - Ele escreve R#2 e atualiza RG2SAV, DPPAGE e ACPAGE.
   - Antes, confere se SCRMOD ainda é o modo gráfico: assim, uma troca pendente nunca bagunça a tela de texto depois de um erro.
 - **88h:**
@@ -694,7 +697,14 @@ Chão xadrez, quatro cubos com uma textura feita com LINE, CIRCLE e PAINT, câme
   - os bancos de dados entram em 6000h-7FFFh: modelos prontos, fonte do G3TITLE, textura 0;
   - os modelos prontos vão desses bancos direto para o geo3d, via OTIR.
 - **A ROM nunca mapeia a página 2 (8000h-BFFFh).** Ali ficam o programa, as variáveis, os arrays, as strings e às vezes a pilha do BASIC. Nenhuma imagem pode ter "AB" em 8000h, senão o BIOS a trataria como uma segunda ROM.
-- **RAM de trabalho:** cerca de 2 KB na página 3, reservados no INIT abaixando HIMEM (o mesmo método do Disk ROM), com o ponteiro guardado em SLTWRK. Guardam:
+- **RAM de trabalho:** 2 KB na página 3, logo abaixo do HIMEM, com o ponteiro guardado em SLTWRK.
+  - **Baixar o HIMEM no INIT não funciona** (conferido nas ROMs reais): quando o cartucho inicializa antes da ROM de disco, que é o caso normal, o DOS2 desliga o disco se o HIMEM não for F380h, e o DOS1 usa uma área fixa (F1C9h-F37Fh) que cairia dentro do bloco. Além disso, o BASIC já calculou a pilha e os buffers a partir do HIMEM antes da busca de ROMs.
+  - **O método usado** é o que as ROMs de disco esperam: o INIT engancha H.CLEA, e o tratador baixa o HIMEM e refaz a distribuição da memória como a rotina do BASIC (7E6Bh), no primeiro CLEAR interno. O DOS1 e o DOS2 procuram um H.CLEA enganchado e guardam o HIMEM resultante para a volta do MSX-DOS.
+  - A área só é preenchida pelo G3INIT, porque na partida ela ainda contém a pilha. Uma marca em SLTWRK ("assinada nesta partida") impede que uma área que sobreviveu a um reset seja usada.
+  - Se outra ROM já ocupa o H.CLEA, a ROM fica sem área de trabalho: G3INIT dá Out of memory e a faixa de abertura avisa. Encadear o H.CLEA de outra ROM fica para depois.
+  - Com a tecla G segurada na partida, nada é instalado, e todo nome G3 dá Syntax error.
+
+  A área guarda:
   - base das portas e cópias de registradores;
   - 16 objetos e a câmera;
   - diretório de modelos e texturas;
@@ -709,8 +719,8 @@ Chão xadrez, quatro cubos com uma textura feita com LINE, CIRCLE e PAINT, câme
 - **Leitura dos argumentos** (conferido na ROM de teste, seção 11):
   - RST 08h (SYNCHR) e RST 10h (CHRGTR) **não servem**: eles levam ao BASIC na página 1, onde está a ROM, e travam a máquina. CHRGTR (4666h) passa por CALBAS, e SYNCHR vira "confere o caractere e chama CHRGTR";
   - FRMEVL, GETBYT, PTRGET, FRESTR e a rotina de erro (406Fh) passam por CALBAS;
-  - rotinas da página 0 que pulam para a página 1 (FOUT, e FRCINT quando dá Overflow) não funcionam por CALBAS, que só troca a página do endereço chamado. Elas exigem um trampolim em RAM na página 3 que ponha o BASIC na página 1 antes da chamada, ou a conversão BCD feita pela própria ROM;
-  - inteiros com sinal passam por FRMEVL + FRCINT (pelo trampolim), porque FRMQNT aceitaria 40000 sem dar erro;
+  - rotinas da página 0 que pulam para a página 1 (FOUT, e FRCINT, cuja primeira instrução já é RST 28h) não funcionam por CALBAS, que só troca a página do endereço chamado. Para elas, a ROM tem um trampolim na área de trabalho que põe o BASIC na página 1 (ENASLT), chama a rotina e volta;
+  - inteiros com sinal passam por FRMEVL e pela conversão BCD da própria ROM, que arredonda (1234,7 dá 1235) e dá Overflow fora de -32768 a 32767. O FRCINT trunca (1234,7 dá 1234), e o FRMQNT aceitaria 40000 sem dar erro;
   - variáveis sem DEFINT chegam como precisão dupla (VALTYP = 8): `X+2` e `A(0)` vieram assim no teste. A ROM aceita os três tipos numéricos em todo argumento;
   - com DEFINT A-Z (VALTYP = 2), há um caminho rápido sem conversão BCD.
 - **Saídas:** a ROM lê e valida todas as entradas primeiro, calcula, e só então faz o PTRGET de cada saída e grava na mesma hora. Criar uma variável nova move os arrays, e isso invalidaria um endereço guardado.
@@ -768,7 +778,7 @@ Chão xadrez, quatro cubos com uma textura feita com LINE, CIRCLE e PAINT, câme
 5. **Quadro síncrono ou assíncrono.** **Recomendo síncrono na v1:** todo G3 volta com o geo3d parado, e só a troca de página fica agendada (98h). Desenhar enquanto o BASIC roda, alimentando o geo3d entre instruções, fica para depois, via a interrupção "RUN terminou" da RTL. Fazer isso pelo gancho H.NEWS tem pontos cegos e riscos de compatibilidade.
 6. **Paleta padrão.** **Recomendo** 0 preto, 1-7 azul, 8-14 laranja e 15 branco. A cor 4 continua azulada, a tela de texto continua legível, a paleta vai também para a tabela do BASIC, e G3END devolve a paleta do MSX.
 7. **G3INIT em modo texto no 98h.** Dar erro, ou trocar sozinho para SCREEN 5 via CHGMOD. **Recomendo dar erro** (Illegal function call): chamar CHGMOD por dentro deixa o estado gráfico do BASIC pela metade, e todo exemplo já começa com SCREEN 5.
-8. **RAM de trabalho.** **Recomendo** cerca de 2 KB na página 3, abaixando HIMEM, com assinatura, e uma tecla segurada na partida (sugestão: G) para não instalar. A área logo acima de BOTTOM (página 2) fica descartada, porque o MSX-DOS a sobrescreve.
+8. **RAM de trabalho.** **Recomendo** cerca de 2 KB na página 3, abaixando HIMEM, com assinatura, e uma tecla segurada na partida (sugestão: G) para não instalar. A área logo acima de BOTTOM (página 2) fica descartada, porque o MSX-DOS a sobrescreve. **Implementado no esqueleto** com 2 KB e a tecla G, mas reservando pelo gancho H.CLEA (ver 7.6).
 9. **Unidade de ângulo.** **Recomendo graus**, que são o que a pessoa já conhece. 256 por volta (estilo jogo) só se a medição mostrar que a conversão pesa; nesse caso, entraria como uma opção de G3INIT, e graus continuariam sendo o padrão.
 10. **Tamanho da v1.** **Recomendo** que a v1 tenha os 11 essenciais, as seções 5.1 a 5.7 (menos G3LINK e G3TITLE), G3REG e G3VDP. A v1.1 traria G3LINK, G3TITLE, G3ARR, G3TABLE e a forma não uniforme de G3SIZE.
 11. **2D e sprites no 88h.** **Recomendo** que a v1 fique com G3TEXT, G3BG e G3VDP. Se o 88h for o alvo principal dos usuários, a v1.1 ganharia G3LINE, G3BOX e G3PSET (relativos à página oculta) e G3SPRITE.
@@ -848,3 +858,37 @@ Os quatro registros e os quatro programas tokenizados são iguais byte a byte.
 - **88h:** qualquer máquina com `-ext HRA_V9968 -ext geo3d88`. HRA_V9968 é o cartucho em 88h, que já vem no fork; `geo3d88.xml` é novo (geo3d em 8Dh/8Fh, ligado ao VDP "V9968"). Conferido no MSX1 Expert e no FS-A1WSX: geo3d responde, e o V9968 dá ID 3 depois de R#21 = 0.
 
 **Próximo passo:** o esqueleto da ROM real, com INIT, RAM na página 3, trampolim para as rotinas da página 0, despacho por tabela e os comandos G3INIT e G3END. Testar nos mesmos quatro BASICs.
+
+## 12. Esqueleto da ROM real (25/09/2026)
+
+`geo3d/basic/g3basic.asm` gera `out/G3BASIC.ROM`, uma MegaROM ASCII8 de 64 KB. O banco 0 (4000h-5FFFh) tem todo o código: 2592 de 8192 bytes. Os bancos 1 a 7 estão vazios.
+
+**O que já funciona:**
+- **Partida:** a ROM se instala uma vez só (o INIT mapeia um banco sem "AB" em 8000h e A000h), engancha H.CLEA, detecta o perfil (88h, depois 98h) e mostra uma linha de abertura. Com G segurada, não instala nada.
+- **Tratador de CALL:** rejeita em poucas instruções qualquer nome que não comece com G3 e despacha os nomes G3 por tabela. Nome G3 desconhecido ou ainda não implementado dá Syntax error.
+- **Argumentos:** posições vazias (`G3INIT(,&H88)`), os três tipos numéricos com arredondamento, Overflow, Type mismatch para texto e Illegal function call fora da faixa.
+- **G3INIT:** os passos da seção 4 nos dois perfis, só com o modo 5 (7 e 8 dão Illegal function call por enquanto). Ficam de fora a cópia da textura 0 e as tabelas de modelos e texturas.
+- **G3END:** volta o V9968 ao modo V9958, a paleta do MSX, a página 0 e as cores do BASIC. Sem G3INIT ativo, não faz nada e não dá erro, para poder ser chamado de dentro de um ON ERROR. Depois de um G3INIT que falhou no meio, desfaz o que ele tinha mudado.
+- **Esperas:** todas com prazo de cerca de 2 s e Device I/O error no fim. CTRL+STOP é guardado e só vira erro quando o geo3d e o motor de comandos estão parados, para devolver tudo em ordem ao BASIC. Um comando do VDP travado é parado no fim do prazo.
+- **Gancho H.TIMI:** instalado no primeiro G3INIT, encadeado e inerte (a troca de página vem com o G3FRAME).
+
+**Testes:** `build.sh` e `run_tests.sh` (openMSX, com `tests.tcl` e os programas em `disk/`). São 1331 verificações em quatro configurações:
+- turboR com V9968 (98h);
+- FS-A1WSX, NMS 8245 e Expert XP-800 com CDX-2 (88h, MSX2+, MSX2 e MSX1).
+
+Os testes cobrem, entre outros:
+- os registradores, a paleta, a VRAM e o geo3d depois de cada comando;
+- os erros esperados pelo ON ERROR;
+- CTRL+STOP nas esperas;
+- reset a quente com a área de trabalho antiga;
+- CLEAR que toma a área de trabalho;
+- H.CLEA já ocupado;
+- o trampolim;
+- a partida com G segurada.
+
+As verificações novas foram conferidas contra a ROM anterior e contra uma versão com defeito proposital, e as duas falharam onde deviam.
+
+**Pendências conhecidas:**
+- a mensagem de memória livre da abertura do BASIC mostra 2048 bytes a mais, porque a reserva acontece depois dela;
+- encadear um H.CLEA de outra ROM;
+- os modos 7 e 8, a textura 0 e os demais comandos (G3OBJ, G3FRAME e o resto).
