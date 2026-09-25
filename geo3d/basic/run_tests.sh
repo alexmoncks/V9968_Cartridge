@@ -8,21 +8,33 @@
 #   msx2p   Panasonic FS-A1WSX + V9968 cartridge          88h  BASIC 3.0
 #   msx2    Philips NMS 8245 + V9968 cartridge            88h  BASIC 2.1
 #   msx1    Gradiente Expert XP-800 + CDX-2 disk + V9968  88h  BASIC 1.0 Br
-# Each machine boots three times, one after the other:
+# Each machine boots five times, one after the other:
 #   gkey  G held (nothing installed; the baseline for HIMEM and FRE(0))
 #   main  normally: disk/G3SKEL.BAS, LIST, G3SKEL2.BAS (a G3INIT left on),
 #         a reset, then G3RESET.BAS
 #   clea  with H.CLEA taken by an earlier ROM (faked by tests.tcl at INIT):
 #         G3CLEA.BAS
-# tests.tcl does the checks. At most two openMSX instances run at once (WSL
-# has little RAM). Prints one PASS/FAIL line per check and a summary; exits 1
-# on any failure. Usage: run_tests.sh [machine...] (default: all four).
+#   cmds  the scene commands: G3CMD.BAS, G3MEM.BAS, G3PERF.BAS (tests.tcl
+#         with tests_cmds.tcl; it dumps VRAM, the work area and the geo3d
+#         traffic to out/t_<machine>_cmds_*)
+#   auto  disk_auto/ (a copy in out/disk_auto_<machine>: the program
+#         writes a file): the Disk ROM runs AUTOEXEC.BAS at boot, which runs
+#         G3AUTO.BAS: the first CLEAR comes with a file open; then CLEAR n,m
+#         with a file open
+# tests.tcl does the checks, then check_frames.py compares the dumps with
+# the Python reference (g3ref.py, sim/gen_scenes.py): out/t_<machine>_py.txt.
+# test_math.py runs the ROM's math in a Z80 emulator first (out/t_math.txt).
+# At most two openMSX instances run at once (WSL has little RAM). Prints one
+# PASS/FAIL line per check and a summary; exits 1 on any failure.
+# Usage: run_tests.sh [machine...] (default: all four).
 set -u
 cd "$(dirname "$0")"
 OPENMSX=${OPENMSX:-~/openMSX/derived/x86_64-linux-opt/bin/openmsx}
 export OPENMSX_SYSTEM_DATA=${OPENMSX_SYSTEM_DATA:-~/openMSX/share}
 export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
 bash build.sh || exit 1
+PY=${PY:-~/venv/bin/python}
+python3 gen_test_bas.py || exit 1
 
 machine() {  # name -> port (decimal), seconds of boot, openMSX options
   case $1 in
@@ -35,7 +47,12 @@ machine() {  # name -> port (decimal), seconds of boot, openMSX options
 }
 
 run1() {  # name mode
-  local name=$1 mode=$2 opts
+  local name=$1 mode=$2 opts disk=disk
+  if [ "$mode" = auto ]; then
+    disk=out/disk_auto_$name
+    rm -rf "$disk"
+    cp -r disk_auto "$disk"
+  fi
   opts=$(machine "$name") || { echo "FAIL $name: unknown machine"; return; }
   set -- $opts
   local port=$1 boot=$2
@@ -43,7 +60,7 @@ run1() {  # name mode
   CFG=$name MODE=$mode PORT=$port BOOT=$boot OUT=out/t_${name}_$mode.txt \
   GFILE=out/t_${name}_gkey.val LBL=out/g3basic.lbl \
     timeout 600 "$OPENMSX" "$@" -cart out/G3BASIC.ROM -romtype ASCII8 \
-    -diska disk -script tests.tcl > out/t_${name}_$mode.log 2>&1
+    -diska "$disk" -script tests.tcl > out/t_${name}_$mode.log 2>&1
 }
 
 runmachine() {
@@ -51,6 +68,8 @@ runmachine() {
   run1 "$1" gkey
   run1 "$1" main
   run1 "$1" clea
+  run1 "$1" cmds
+  run1 "$1" auto
 }
 
 names=("$@")
@@ -65,10 +84,22 @@ while [ $i -lt ${#names[@]} ]; do
   i=$((i + 2))
 done
 
+"$PY" test_math.py > out/t_math.txt 2>&1
+"$PY" check_frames.py "${names[@]}"
+
 npass=0
 nfail=0
+grep -E '^(FAIL|  info)' out/t_math.txt
+if grep -q '^test_math: ' out/t_math.txt; then
+  npass=$((npass + $(awk '/^test_math: / { print $2 - $4 }' out/t_math.txt)))
+  nfail=$((nfail + $(awk '/^test_math: / { print $4 }' out/t_math.txt)))
+  grep '^test_math: ' out/t_math.txt
+else
+  echo "FAIL test_math.py did not finish (out/t_math.txt)"
+  nfail=$((nfail + 1))
+fi
 for name in "${names[@]}"; do
-  for mode in gkey main clea; do
+  for mode in gkey main clea cmds auto py; do
     f=out/t_${name}_$mode.txt
     if [ ! -f "$f" ]; then
       echo "FAIL $name: no result from the $mode run (see out/t_${name}_$mode.log)"

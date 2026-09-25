@@ -63,6 +63,7 @@ Forma dos nomes: `CALL G3xxx` ou a forma curta `_G3xxx`, sempre com o prefixo G3
   - ay é o rumo: 90 vira a frente para +X (direita).
   - ax levanta a frente (o nariz sobe).
   - az rola: positivo inclina para a direita, visto de trás.
+  - Como Ry vem por último, ax inclina o objeto em torno do próprio eixo X dele: de lado, a mesma inclinação rola a figura no plano da tela. Para girar um modelo como num toca-discos (girar e inclinar sempre em torno dos eixos da tela), guarde-o deitado, com o alto em +Z e a frente em +Y: az gira a figura em torno do eixo vertical dela, e ax (90 = em pé) a inclina em torno do eixo horizontal da tela. É o que faz o `tools/g3viewer.py`.
 - A frente de todo objeto é o seu +Z. A nave pronta aponta o nariz para +Z.
 - G3SPIN e G3VEL contam por quadro desenhado. Se um quadro atrasar, o jogo fica mais lento, como nos jogos da época.
 
@@ -136,7 +137,7 @@ O chão (9) é sempre desenhado antes dos outros objetos. A placa (11) só apare
 - Até 255 vértices, 255 faces e 255 arestas por modelo.
 - **Vértice:** x, y, z inteiros. Mantenha-os dentro de ±8000, para que não saturem depois da rotação.
 - **Face:** um quadrilátero convexo e plano de 4 vértices; um triângulo repete o terceiro vértice (d = c).
-  - Ordem dos cantos: anti-horária vista de fora, com Y para cima.
+  - Ordem dos cantos: horária vista de fora, com X para a direita e Y para cima, como a face aparece na tela quando está de frente para a câmera. Em números: o produto vetorial (p1-p0) x (p2-p0) aponta para fora do modelo. O geo3d desenha só a face cujos três primeiros cantos aparecem na tela em sentido horário; a que aparece em sentido anti-horário está de costas e é descartada. (Até 25/09/2026 este item dizia "anti-horária", o que estava errado: o teste "cmds" do run_tests.sh desenha dois quadrados com a opção 0 e confere isso.)
   - Por padrão, a ROM corrige sozinha a orientação de cada face, testando-a contra o centro do modelo. Isso acerta em formas convexas; em formas côncavas, desligue a correção e ordene os cantos à mão.
   - A cor segue as regras de 3.4. A normal é calculada pela ROM.
 - **UV (opcional):** 4 pares de texels de 0 a 255 (u para a direita, v para baixo). Uma face com UV é texturizada nos estilos 2 e 3.
@@ -366,7 +367,8 @@ Erro: Illegal function call se p já estiver preso a outro objeto.
 | `G3BG(c [,p])` | fundo de cada quadro: cor, figura ou nada |
 
 **G3RAMP:**
-- `c` vai de 1 a 9, e r, g, b de 0 a 7. O tom k (0 a 6) vale cor*(k+1)/7, arredondado: são 7 tons diferentes, do mais escuro até a própria cor. (A fórmula anterior, cor*(k+2)/8, repetia tons; a paleta padrão do esqueleto já usa a nova.)
+- `c` vai de 1 a 9, e r, g, b de 0 a 7. O tom k (0 a 6) vale cor*(k+1)/7, arredondado, do mais escuro até a própria cor. (A fórmula anterior, cor*(k+2)/8, repetia tons; a paleta padrão do esqueleto já usa a nova.)
+- Os 7 tons só são todos diferentes quando o maior canal da cor é 7. Com canais menores, tons vizinhos se repetem e o matiz dos tons escuros muda: (1,2,3) dá 000, 011, 011, 112, 112, 123 e 123. Se algum canal passar de 3, o tom 0 nunca sai preto; com todos os canais até 3, ele sai preto, igual ao fundo padrão, e as faces de costas para a luz somem contra ele.
 - Registra c como rampa e desfaz o registro das rampas que ele sobrepõe.
 - No 98h, também grava na tabela de paleta do BASIC, então COLOR=RESTORE a mantém.
 - Em SCREEN 8, dá Illegal function call.
@@ -431,7 +433,7 @@ Erro: Illegal function call se y+h passar de 212 ou w passar da largura da tela.
   4. ne vezes `a, b`;
   5. se t = 1, nf vezes `u0, v0, u1, v1, u2, v2, u3, v3`.
 - Depois do comando, o READ continua logo após o modelo, então vários modelos podem vir em sequência.
-- Erros: Out of DATA, Syntax error (valor que não é número), Illegal function call (índice inválido) e Out of memory (área de modelos cheia).
+- Erros: Out of DATA, Syntax error (valor que não é número), Illegal function call (índice inválido; no 98h, também fora do SCREEN 5, porque os comandos do VDP que a ROM usa não rodam em modo texto) e Out of memory (área de modelos cheia).
 
 **Opção o** (em G3DATA e G3MDL), somando valores:
 - 1: a ROM corrige a orientação das faces. Já vem ligada.
@@ -613,7 +615,7 @@ Uma casa (caixa com telhado de duas águas), girando. Tecla 1 = arame, tecla 2 =
 
 - Linha 100: 10 vértices, 8 faces, 0 arestas (o arame usa as bordas das faces) e sem UV.
 - Faces: as paredes na rampa 1 (azul), o telhado na rampa 8 (laranja) e as duas empenas como triângulos (o último vértice repetido).
-- A orientação dos cantos não importa: a ROM corrige, porque a casa é convexa.
+- A orientação dos cantos não importa: a ROM corrige, porque a casa é convexa. Com `G3DATA(16,0)`, cada face teria de vir na ordem de 3.7 (horária vista de fora); a parede da frente, por exemplo, seria 3,2,1,0.
 
 ### 6.3 Vários objetos, textura desenhada pelo BASIC, duas páginas
 
@@ -675,7 +677,7 @@ Chão xadrez, quatro cubos com uma textura feita com LINE, CIRCLE e PAINT, câme
 - **Tratador de CALL:** ele pode entrar com as interrupções desligadas (chamada entre slots). A ROM executa EI antes de qualquer espera; sem isso, o JIFFY para e a espera nunca acaba.
 - **Troca de página no 98h:** é feita pelo gancho H.TIMI. Esse gancho roda no começo da interrupção, antes do PLAY e da música, e por isso cai dentro do branco. O gancho tem o formato CALLF (RST 30h para a ROM), não um JP para a RAM: o driver Kanji (CALL KANJI) e o DOS1 encadeiam o gancho anterior supondo o formato CALLF, e um gancho JP derrubou o FS-A1WSX no teste. Ele é instalado no primeiro G3INIT, não na partida, para que um programa sem 3D não pague nada por interrupção.
   - Ele escreve R#2 e atualiza RG2SAV, DPPAGE e ACPAGE.
-  - Antes, confere se SCRMOD ainda é o modo gráfico: assim, uma troca pendente nunca bagunça a tela de texto depois de um erro.
+  - Antes, confere se SCRMOD ainda é o modo gráfico. Se não for, a troca pendente é descartada: ela nunca bagunça a tela de texto depois de um erro, nem cai num SCREEN 5 feito depois (um novo RUN, por exemplo). O próximo G3FRAME acha a página mostrada em DPPAGE de qualquer jeito.
 - **88h:**
   - As interrupções do V9968 ficam desligadas (IE0 = IE1 = 0). O pino /INT do cartucho está ligado ao slot, e o BIOS nunca reconheceria essa interrupção, o que travaria o micro.
   - A ROM é a única que lê o S#0 do V9968. Ela zera o bit F logo depois de cada troca, para não confiar num F antigo, e conta os brancos por ele.
@@ -700,6 +702,11 @@ Chão xadrez, quatro cubos com uma textura feita com LINE, CIRCLE e PAINT, câme
 - **RAM de trabalho:** 2 KB na página 3, logo abaixo do HIMEM, com o ponteiro guardado em SLTWRK.
   - **Baixar o HIMEM no INIT não funciona** (conferido nas ROMs reais): quando o cartucho inicializa antes da ROM de disco, que é o caso normal, o DOS2 desliga o disco se o HIMEM não for F380h, e o DOS1 usa uma área fixa (F1C9h-F37Fh) que cairia dentro do bloco. Além disso, o BASIC já calculou a pilha e os buffers a partir do HIMEM antes da busca de ROMs.
   - **O método usado** é o que as ROMs de disco esperam: o INIT engancha H.CLEA, e o tratador baixa o HIMEM e refaz a distribuição da memória como a rotina do BASIC (7E6Bh), no primeiro CLEAR interno. O DOS1 e o DOS2 procuram um H.CLEA enganchado e guardam o HIMEM resultante para a volta do MSX-DOS.
+  - **Arquivos abertos:** o CLEARC do BASIC fecha os arquivos logo depois do gancho, pela tabela FILTAB, menos o arquivo do programa num LOAD ou RUN "arquivo" (o FCB 0, aberto durante o NEW da carga). Por isso o tratador nunca muda de lugar o FCB de um arquivo aberto:
+    - num CLEAR n,m com m acima da área já reservada, a tabela de arquivos fica onde está: o tratador põe o HIMEM de volta na área e mantém os FCBs, e o BASIC fecha os arquivos em seguida, com os dados gravados;
+    - na partida com AUTOEXEC.BAS, o primeiro CLEAR é o NEW da carga, com o programa aberto, e a tabela mudaria de lugar. Nada é feito nessa hora (antes, o programa não carregava: "File not OPEN"), e a reserva acontece no RUN que vem depois da carga;
+    - se a tabela precisasse mudar de lugar com um arquivo aberto numa área já reservada, a área é abandonada como no caso sem espaço (a assinatura sai), e o G3INIT seguinte pede um CLEAR antes.
+    - O teste "auto" do run_tests.sh confere os dois primeiros casos: um CLEAR 200,HIMEM+500 com um arquivo em disco aberto para escrita deixa a área intacta e o arquivo fechado com os dados.
   - A área só é preenchida pelo G3INIT, porque na partida ela ainda contém a pilha. Uma marca em SLTWRK ("assinada nesta partida") impede que uma área que sobreviveu a um reset seja usada.
   - Se outra ROM já ocupa o H.CLEA, a ROM fica sem área de trabalho: G3INIT dá Out of memory e a faixa de abertura avisa. Encadear o H.CLEA de outra ROM fica para depois.
   - Com a tecla G segurada na partida, nada é instalado, e todo nome G3 dá Syntax error.

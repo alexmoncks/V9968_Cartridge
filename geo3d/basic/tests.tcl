@@ -24,6 +24,13 @@
 #         G3RESET.BAS
 #   clea  H.CLEA taken by an earlier ROM (faked at INIT): on without a work
 #         area (G3CLEA.BAS)
+#   cmds  G3CMD.BAS, G3MEM.BAS, G3PERF.BAS: the scene commands (check
+#         points 133-219, tests_cmds.tcl)
+#   auto  disk_auto/AUTOEXEC.BAS runs G3AUTO.BAS at boot: the first CLEAR
+#         comes while the Disk ROM has a file open, and the work area must
+#         wait for a CLEAR without an open file (check points 230, 231);
+#         then CLEAR n,m above the work area with a file open: HIMEM back
+#         on the area, the file closed by BASIC with its data (232-235)
 # Env: OUT (result file), CFG (turbor, msx2p, msx2, msx1), PORT (152: 98h
 # profile, 136: 88h), MODE, BOOT (seconds before typing), GFILE (HIMEM and
 # FRE(0) of the gkey run: written by it, read by the others), LBL (label
@@ -265,7 +272,7 @@ proc cp {n d} {
     1 { cp_boot $d }
     10 {}
     11 { err "CALL G3FOO (G3 name that does not exist)" $d 2 }
-    12 { err "CALL G3OBJ(1,1) (in the spec, not implemented yet)" $d 2 }
+    12 { err "CALL G3VEL(1,1) (in the spec, not implemented yet)" $d 2 }
     13 {
       err "CALL XYZ (not a G3 name)" $d 2
       eq "CALL XYZ: our handler called once, passed on with carry and HL unchanged" \
@@ -467,6 +474,43 @@ proc cp {n d} {
     130 { err "H.CLEA taken: CALL G3INIT" $d 7; noaccess "H.CLEA taken: G3INIT" 1 }
     131 { err "H.CLEA taken: CALL G3END" $d 0; noaccess "H.CLEA taken: G3END" }
     132 { err "H.CLEA taken: CALL G3FOO" $d 2 }
+    230 {
+      lassign $d lo hi
+      set fre [expr {$lo + 256 * $hi}]
+      set him [peek16 0xFC4A]
+      set ::auto_ran 1
+      check "AUTOEXEC.BAS: G3AUTO.BAS loaded and runs" 1
+      eq "AUTOEXEC.BAS: work area right at HIMEM" [h4 [blk]] [h4 $him]
+      set g [gheld]
+      if {[llength $g]} {
+        lassign $g hg fg
+        eq "AUTOEXEC.BAS: HIMEM [h4 $him]: 2048 below the G-held boot ([h4 $hg])" [expr {$hg - $him}] 2048
+      }
+      check "AUTOEXEC.BAS: FRE(0) sane" [expr {$fre > 10000 && [peek16 0xF674] < $him}] "FRE(0) $fre, STKTOP [h4 [peek16 0xF674]]"
+    }
+    232 {
+      err "AUTOEXEC.BAS: CALL G3INIT" $d 0
+      set ::wk_auto [debug read_block memory [blk] 2048]
+    }
+    233 {
+      set b [blk]
+      eq "CLEAR 200,HIMEM+500 with a file open: HIMEM back at the work area" [h4 [peek16 0xFC4A]] [h4 $b]
+      eq "CLEAR n,m with a file open: the work area still signed (SLTWRK)" [lindex [grpflags] 0] 1
+      # W_BLANK (offset 77) counts the blanks in the 98h profile
+      set now [string replace [debug read_block memory $b 2048] 77 77 x]
+      set was [string replace $::wk_auto 77 77 x]
+      check "CLEAR n,m with a file open, then a string: the work area unchanged" [string equal $now $was]         [vdiff 0 $now $was]
+      check "CLEAR n,m with a file open: the string space and the file table under the work area"         [expr {[peek16 0xF672] < $b && [peek16 0xF860] < $b}] "MEMSIZ [h4 [peek16 0xF672]], FILTAB [h4 [peek16 0xF860]]"
+      eq "CLEAR n,m with a file open: file #1 closed by BASIC (its FCB mode)" [peek [peek16 [expr {[peek16 0xF860] + 2}]]] 0
+    }
+    234 {
+      eq "after that CLEAR: G3OBJ ERR, and the file reads back \"G3OK\" (closed with its data): LEN, ASC" $d {0 4 71}
+    }
+    235 { err "CLEAR 200 afterwards: CALL G3OBJ" $d 0 }
+    231 {
+      err "AUTOEXEC.BAS: CALL G3END" $d 0
+      check "AUTOEXEC.BAS: the program ends normally" [string match "*AUTO OK*" [get_screen]] "not on screen"
+    }
     199 {
       if {$::tmode eq "main"} {
         check "the run after the reset ends normally" [string match "*RESET RUN OK*" [get_screen]] "not on screen"
@@ -474,7 +518,7 @@ proc cp {n d} {
       }
       finish
     }
-    default { check "check point $n" 0 "unexpected" }
+    default { if {![cmds_cp $n $d]} { check "check point $n" 0 "unexpected" } }
   }
 }
 
@@ -496,6 +540,10 @@ proc cp_boot {d} {
   set him [peek16 0xFC4A]
   say "  info $::cfg: HIMEM [h4 $him] MEMSIZ [h4 [peek16 0xF672]] STKTOP [h4 [peek16 0xF674]] VARTAB [h4 [peek16 0xF6C2]] ARYTAB [h4 [peek16 0xF6C4]] STREND [h4 [peek16 0xF6C6]] SP [h4 [reg SP]] FRE(0) $fre"
   eq "INIT ran once" $::inits 1
+  if {$::tmode eq "cmds"} {
+    after time 1 { type "RUN\"G3CMD.BAS\"\r" }
+    return
+  }
   set a [expr {0xFCC9 + 16 * $::ps + 4 * $::ss}]
   eq "SLTATR: STATEMENT registered for page 1 only (not again at 8000h)" \
     "[h2 [peek [expr {$a + 1}]]] [h2 [peek [expr {$a + 2}]]]" "20 00"
@@ -522,7 +570,7 @@ proc cp_boot {d} {
     after time 1 { type "RUN\"G3CLEA.BAS\"\r" }
     return
   }
-  set b [string first "geo3d BASIC 0.1 (" $::banner]
+  set b [string first "geo3d BASIC 0.2 (" $::banner]
   if {$b >= 0} {
     say "  info $::cfg: INIT banner: [lindex [split [string range $::banner $b end] \n] 0]"
   }
@@ -532,7 +580,7 @@ proc cp_boot {d} {
   } else {
     say "  info $::cfg: the INIT banner is gone at the BASIC prompt (BASIC cleared the screen)"
   }
-  check "INIT banner printed with the profile found" [string match "*geo3d BASIC 0.1 ($want*" $::banner] "screen at INIT: [string range $::banner 0 120]"
+  check "INIT banner printed with the profile found" [string match "*geo3d BASIC 0.2 ($want*" $::banner] "screen at INIT: [string range $::banner 0 120]"
   eq "H.CLEA = CALLF to the ROM (4026h)" [mem 0xFED0 5] "F7[h2 $::slot]2640C9"
   eq "work area right at HIMEM" [h4 [blk]] [h4 $him]
   eq "SLTWRK flags at boot: 00 (nothing signed, nothing to undo)" [h2 [peek $::grp]] 00
@@ -978,6 +1026,9 @@ proc st_off {tag first {lost 0}} {
   }
 }
 
+# ---- the scene commands (mode cmds) ----------------------------------------------------
+source tests_cmds.tcl
+
 # ---- boot and typing --------------------------------------------------------------------
 if {$::tmode eq "gkey"} {
   keymatrixdown 3 0x10
@@ -987,9 +1038,22 @@ if {$::tmode eq "gkey"} {
 # (twice: with G held, the first one may carry typed g's)
 after time $::env(BOOT) { type "\r" }
 after time [expr {$::env(BOOT) + 2}] { type "\r" }
-after time [expr {$::env(BOOT) + 4}] {
-  # CLEAR first: with G held, the g's typed at boot may have made a variable
-  type "CLEAR:F=FRE(0):OUT &H2F,F-INT(F/256)*256:OUT &H2F,INT(F/256):OUT &H2E,1\r"
+set ::auto_ran 0
+if {$::tmode eq "auto"} {
+  # nothing typed: the Disk ROM runs AUTOEXEC.BAS (disk_auto/), and the
+  # first CLEARC after boot comes while a program file is open
+  after time [expr {$::env(BOOT) + 20}] {
+    if {!$::auto_ran} {
+      check "AUTOEXEC.BAS: G3AUTO.BAS loaded and runs" 0 \
+        "screen: [string range [string map {"\n" " "} [string trim [get_screen]]] 0 200]"
+      finish
+    }
+  }
+} else {
+  after time [expr {$::env(BOOT) + 4}] {
+    # CLEAR first: with G held, the g's typed at boot may have made a variable
+    type "CLEAR:F=FRE(0):OUT &H2F,F-INT(F/256)*256:OUT &H2F,INT(F/256):OUT &H2E,1\r"
+  }
 }
 after time 450 {
   say "FAIL $::cfg: timeout at PC=[h4 [reg PC]] SP=[h4 [reg SP]] slots [get_selected_slot 0]/[get_selected_slot 1]/[get_selected_slot 2]/[get_selected_slot 3]"
