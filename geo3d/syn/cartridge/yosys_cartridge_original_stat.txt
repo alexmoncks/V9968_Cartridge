@@ -1,0 +1,45 @@
+
+33. Printing statistics.
+
+=== tangnano20k_vdp_cartridge ===
+
+        +----------Local Count, excluding submodules.
+        | 
+    11071 wires
+    30280 wire bits
+    11071 public wires
+    30280 public wire bits
+       29 ports
+       94 port bits
+    16262 cells
+       32   $scopeinfo
+      892   ALU
+        1   CLKDIV
+      343   DFF
+       32   DFFCE
+     1074   DFFE
+      133   DFFR
+     3251   DFFRE
+       29   DFFS
+       79   DFFSE
+        4   DPX9B
+        1   DVI_TX_Top
+        1   GND
+       18   IBUF
+        8   IOBUF
+      908   LUT1
+     1021   LUT2
+     1926   LUT3
+     4895   LUT4
+        1   MULT18X18
+        7   MULT9X9
+     1127   MUX2_LUT5
+      203   MUX2_LUT6
+       74   MUX2_LUT7
+       31   MUX2_LUT8
+       68   OBUF
+       96   RAM16SDP4
+        4   SPX9
+        1   VCC
+        2   rPLL
+

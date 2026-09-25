@@ -1,0 +1,7 @@
+IO_LOC "clk" 4;
+IO_LOC "clk_eng" 80;
+IO_LOC "rst_n" 86;
+IO_LOC "sin" 30;
+IO_LOC "ce_in" 31;
+IO_LOC "sout" 73;
+IO_LOC "busy" 74;
