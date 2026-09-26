@@ -94,6 +94,7 @@ module vdp_timing_control (
 	input				clear_sprite_collision_xy,
 	output		[8:0]	sprite_collision_x,
 	output		[9:0]	sprite_collision_y,
+	input				clear_sprite_overmap,
 	output				sprite_overmap,
 	output		[4:0]	sprite_overmap_id,
 
@@ -256,6 +257,7 @@ module vdp_timing_control (
 		.sprite_collision_x							( sprite_collision_x						),
 		.sprite_collision_y							( sprite_collision_y						),
 		.sprite_off									( w_sprite_off								),
+		.clear_sprite_overmap						( clear_sprite_overmap						),
 		.sprite_overmap								( sprite_overmap							),
 		.sprite_overmap_id							( sprite_overmap_id							),
 		.reg_screen_mode							( reg_screen_mode							),

@@ -93,6 +93,7 @@ module vdp_cpu_interface (
 	output				clear_sprite_collision_xy,	//	pulse
 	input		[8:0]	sprite_collision_x,
 	input		[9:0]	sprite_collision_y,
+	output				clear_sprite_overmap,		//	pulse
 	input				sprite_overmap,
 	input		[4:0]	sprite_overmap_id,
 	output				clear_border_detect,		//	pulse
@@ -258,6 +259,9 @@ module vdp_cpu_interface (
 	reg		[1:0]		ff_button2 = 2'd0;
 	reg					ff_force_page2 = 1'b0;
 	reg					ff_lock_extregs = 1'b1;
+
+	reg					ff_sprite_overmap;
+	reg			[4:0]	ff_sprite_overmap_id;
 
 	always @( posedge clk ) begin
 		ff_button1 <= button;
@@ -757,7 +761,7 @@ module vdp_cpu_interface (
 
 	always @( posedge clk ) begin
 		case( ff_status_register_pointer )
-		4'd0:		ff_status_register <= { ff_frame_interrupt, sprite_overmap, sprite_collision, sprite_overmap_id };
+		4'd0:		ff_status_register <= { ff_frame_interrupt, ff_sprite_overmap, sprite_collision, ff_sprite_overmap_id };
 		4'd1:		ff_status_register <= { 2'd0, ff_v9958_mode ? c_v9958id: c_v9968id, ff_line_interrupt };
 		4'd2:		ff_status_register <= { status_transfer_ready, status_vsync, status_hsync, status_border_detect, 2'b11, status_field, status_command_execute };
 		4'd3:		ff_status_register <= sprite_collision_x[7:0];
@@ -808,6 +812,18 @@ module vdp_cpu_interface (
 		end
 	end
 
+	always @( posedge clk ) begin
+		if( !reset_n ) begin
+			ff_sprite_overmap		<= 1'b0;
+			ff_sprite_overmap_id	<= 5'h1F;
+		end
+		else if( intr_frame ) begin
+			ff_sprite_overmap		<= sprite_overmap;
+			ff_sprite_overmap_id	<= sprite_overmap_id;
+		end
+	end
+
+	assign clear_sprite_overmap			= intr_frame;
 	assign clear_sprite_collision		= (w_read && ff_port1 && ff_status_register_pointer == 4'd0);
 	assign clear_sprite_collision_xy	= (w_read && ff_port1 && ff_status_register_pointer == 4'd5);
 	assign read_color					= (w_read && ff_port1 && ff_status_register_pointer == 4'd7);

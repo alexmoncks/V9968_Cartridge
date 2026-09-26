@@ -77,6 +77,7 @@ module vdp_sprite_select_visible_planes (
 	output		[4:0]	selected_count,
 	output				start_info_collect,
 
+	input				clear_sprite_overmap,
 	output				sprite_overmap,
 	output		[4:0]	sprite_overmap_id,
 	input				clear_sprite_collision,
@@ -347,16 +348,12 @@ module vdp_sprite_select_visible_planes (
 	always @( posedge clk ) begin
 		if( !reset_n ) begin
 			ff_sprite_overmap		<= 1'b0;
-			ff_sprite_overmap_id	<= 5'd0;
+			ff_sprite_overmap_id	<= 5'h1F;
 		end
-		else if( ff_sprite_overmap ) begin
-			if( clear_sprite_collision ) begin
-				//	Clear overmap flag when Read S#0
-				ff_sprite_overmap	<= 1'b0;
-			end
-			else begin
-				//	hold
-			end
+		else if( clear_sprite_overmap ) begin
+			//	Clear sprite overmap flag on top of frame.
+			ff_sprite_overmap		<= 1'b0;
+			ff_sprite_overmap_id	<= 5'h1F;
 		end
 		else if( !screen_v_active || !screen_h_active || !reg_display_on ) begin
 			//	hold
@@ -365,8 +362,10 @@ module vdp_sprite_select_visible_planes (
 			if( w_sub_phase == 4'd7 ) begin
 				if( !w_invisible && w_selected_full ) begin
 					ff_sprite_overmap		<= 1'b1;
+					if( { 1'b0, ff_sprite_overmap_id } > ff_current_plane_num ) begin
+						ff_sprite_overmap_id	<= ff_current_plane_num[4:0];
+					end
 				end
-				ff_sprite_overmap_id	<= ff_current_plane_num[4:0];
 			end
 		end
 	end

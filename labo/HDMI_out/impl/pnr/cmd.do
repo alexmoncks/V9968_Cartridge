@@ -1,14 +1,13 @@
--d D:\github\HRA_product\V9968_Cartridge\labo\HDMI_out\impl\gwsynthesis\tangnano20k_vdp_cartridge.vg
+-d C:\Users\hra\Documents\github\HRA_product\V9968_Cartridge\labo\HDMI_out\impl\gwsynthesis\tangnano20k_vdp_cartridge.vg
 -p GW2AR-18C-QFN88-8
 -pn GW2AR-LV18QN88C8/I7
--cst D:\github\HRA_product\V9968_Cartridge\labo\HDMI_out\src\tangnano20k_vdp_cartridge.cst
--cfg D:\github\HRA_product\V9968_Cartridge\labo\HDMI_out\impl\pnr\device.cfg
+-cst C:\Users\hra\Documents\github\HRA_product\V9968_Cartridge\labo\HDMI_out\src\tangnano20k_vdp_cartridge.cst
+-cfg C:\Users\hra\Documents\github\HRA_product\V9968_Cartridge\labo\HDMI_out\impl\pnr\device.cfg
 -bit
 -tr
 -ph
 -timing
 -cst_error
--convert_sdp32_36_to_sdp16_18
 -place_option 0
 -route_option 1
 -clock_route_order 0
