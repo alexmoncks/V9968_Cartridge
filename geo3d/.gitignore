@@ -32,3 +32,4 @@ rom/rom_mod.asm
 z80/GEO3D.COM
 z80/GEO3DF.COM
 basic/out/
+game/out/
