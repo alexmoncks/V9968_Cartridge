@@ -1,0 +1,40 @@
+Test-only patch for the openMSX fork (alexmoncks/openMSX, branch geo3d, de29fb854):
+the V9968 reports sprite collisions the way the HRA FPGA does
+(vdp_sprite_makeup_pixel.v): a later sprite with IC = 0 and CC = 0 collides
+with a visible dot of an earlier one, whatever its own colour, so invisible
+(colour 0) hitboxes collide. Not applied to the fork: tests/run_all.sh uses a
+build of it through OPENMSX_HW. Apply with: git apply <this file>
+
+diff --git a/src/video/SpriteChecker.cc b/src/video/SpriteChecker.cc
+index 93adf9165..2389fb3f2 100644
+--- a/src/video/SpriteChecker.cc
++++ b/src/video/SpriteChecker.cc
+@@ -431,12 +431,18 @@ inline void SpriteChecker::checkSprites2(int minLine, int maxLine)
+ 	        Probably new approach is needed anyway for OR-ing.
+ 	*/
+ 	bool can0collide = vdp.canSpriteColor0Collide();
++	// G3COLL (private test build, not committed): the HRA V9968 FPGA rule
++	// (vdp_sprite_makeup_pixel.v): the later sprite collides with the dot of
++	// an earlier one that is visible (colour != 0, or TP); the later sprite's
++	// own colour does not matter, only its IC and CC; the earlier one's IC
++	// and CC do not matter.
++	bool hraRule = vdp.hasECOM();
+ 	for (auto line : xrange(minLine, maxLine)) {
+ 		int minXCollision = 999; // no collision
+ 		std::span<SpriteInfo, 32 + 1> visibleSprites = spriteBuffer[line];
+ 		for (int i = std::min<int>(maxVisible, spriteCount[line]); --i >= 1; /**/) {
+ 			auto colorAttrib1 = visibleSprites[i].colorAttrib;
+-			if (!can0collide && ((colorAttrib1 & 0xf) == 0)) continue;
++			if (!hraRule && !can0collide && ((colorAttrib1 & 0xf) == 0)) continue;
+ 			// If CC or IC is set, this sprite cannot collide.
+ 			if (colorAttrib1 & 0x60) continue;
+ 
+@@ -446,7 +452,7 @@ inline void SpriteChecker::checkSprites2(int minLine, int maxLine)
+ 				auto colorAttrib2 = visibleSprites[j].colorAttrib;
+ 				if (!can0collide && ((colorAttrib2 & 0xf) == 0)) continue;
+ 				// If CC or IC is set, this sprite cannot collide.
+-				if (colorAttrib2 & 0x60) continue;
++				if (!hraRule && (colorAttrib2 & 0x60)) continue;
+ 
+ 				// Do sprite i and sprite j collide?
+ 				int x_j = visibleSprites[j].x;
