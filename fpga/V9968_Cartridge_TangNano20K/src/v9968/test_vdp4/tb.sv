@@ -114,17 +114,19 @@ module tb ();
 			screen_pos_x = scan_clock;
 			@(posedge clk);
 			#1;
+			if (screen_pos_x == 13 * 16 && u_palette.ff_display_color_sprite_en !== 1'b0) begin
+				$fatal(1, "Sprite enabled inside the left mask");
+			end
 			if (screen_pos_x == 14 * 16 || screen_pos_x == 15 * 16) begin
-				$display("x=%0d phase=%0d bg_en=%b bg_en_d=%b sprite_en=%b rgb=%02x,%02x,%02x",
+				$display("x=%0d phase=%0d bg_en=%b sprite_en=%b rgb=%02x,%02x,%02x",
 					screen_pos_x[13:4], screen_pos_x[3:0], display_color_screen_mode_en,
-					u_palette.ff_display_color_screen_mode_en, u_palette.ff_display_color_sprite_en,
+					u_palette.ff_display_color_sprite_en,
 					vdp_r, vdp_g, vdp_b);
 			end
 			if (screen_pos_x == 14 * 16 &&
 				(display_color_screen_mode_en !== 1'b1 ||
-				 u_palette.ff_display_color_screen_mode_en !== 1'b1 ||
-				 u_palette.ff_display_color_sprite_en !== 1'b0)) begin
-				$fatal(1, "First BG-enabled pixel did not expose the sprite-enable gap");
+				 u_palette.ff_display_color_sprite_en !== 1'b1)) begin
+				$fatal(1, "Sprite did not become enabled at the first BG-enabled pixel");
 			end
 			if (screen_pos_x == 15 * 16 && u_palette.ff_display_color_sprite_en !== 1'b1) begin
 				$fatal(1, "Sprite did not become enabled after the boundary");
@@ -134,14 +136,14 @@ module tb ();
 					screen_pos_x[13:4], screen_pos_x[3:0], u_palette.ff_display_color_sprite_en,
 					vdp_r, vdp_g, vdp_b);
 			end
-			if (screen_pos_x == 14 * 16 + 4 && {vdp_r, vdp_g, vdp_b} !== 24'hFFFFFF) begin
-				$fatal(1, "First BG-enabled pixel did not reveal the white background");
+			if (screen_pos_x == 14 * 16 + 4 && {vdp_r, vdp_g, vdp_b} !== 24'h0000FF) begin
+				$fatal(1, "First BG-enabled pixel was not covered by the blue sprite");
 			end
 			if (screen_pos_x == 15 * 16 + 4 && {vdp_r, vdp_g, vdp_b} !== 24'h0000FF) begin
 				$fatal(1, "Following pixel did not show the blue sprite");
 			end
 		end
-		$display("Left-mask boundary gap reproduced");
+		$display("Left-mask boundary covered by sprite");
 		$finish;
 	end
 
