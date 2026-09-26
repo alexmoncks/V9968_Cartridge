@@ -72,8 +72,10 @@
 //   a. LM = transpose(R) * L, the light in model space (9 multiplies)
 //   b. per face: skip if a vertex is behind the near plane or saturated;
 //      back-face cull by the sign of the projected area of I0, I1, I2
-//      (visible when area > 0; wind faces counter-clockwise seen from
-//      outside, with y up); shade level = min(6, 7 * max(0, LM . N)), colour =
+//      (visible when area > 0; screen y grows downwards, so a visible face
+//      runs clockwise seen from outside with x right and y up, i.e.
+//      cross(V1 - V0, V2 - V0) points outwards); shade level =
+//      min(6, 7 * max(0, LM . N)), colour =
 //      BASE + level; depth key = sum of the 4 camera-space Z
 //   c. painter's order: farthest key first, ties by lower face index
 //   d. each face (convex quad; triangles repeat a vertex) is filled row by

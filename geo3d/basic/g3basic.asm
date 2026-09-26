@@ -1,26 +1,42 @@
 ; SPDX-License-Identifier: MIT
 ; Copyright (c) 2026 Alex Moncks
 ; ============================================================================
-; g3basic.asm  -  geo3d MSX-BASIC extension ROM, skeleton (version 0.1)
+; g3basic.asm  -  geo3d MSX-BASIC extension ROM (version 0.2)
 ;
 ; CALL G3xxx (or _G3xxx) statements for the geo3d 3D coprocessor next to a
-; V9968, as specified in docs/BASIC_API.md. This skeleton has the ROM frame
-; (INIT, work area, hooks, CALL dispatch, argument reader) and two commands:
+; V9968, as specified in docs/BASIC_API.md: the ROM frame (INIT, work area,
+; hooks, CALL dispatch, argument reader) and these commands (SCREEN 5):
 ;   G3INIT [(modo [, base])]   V9968 mode, palette, pages 0 and 1 cleared,
 ;                              geo3d set up for SCREEN 5, scene defaults
 ;   G3END                      V9958 mode, MSX palette, page 0, BASIC colours
+;   G3OBJ(n, m [,x,y,z])       object n (1-16) with model m (0 pivot, 16-31)
+;   G3POS(n,x,y,z [,ax,ay,az]) position (and angles, degrees)
+;   G3ROT(n,ax,ay,az)          angles in degrees, R = Ry * Rx * Rz
+;   G3SPIN(n,dax,day,daz)      degrees added at every G3FRAME
+;   G3STYLE(n,s [,t])          0 wireframe, 1 solid shaded
+;   G3CAM(x,y,z)               camera, looking at the origin
+;   G3RAMP(c,r,g,b)            a 7-tone ramp in colours c..c+6
+;   G3PAL(c,r,g,b)             one palette colour (0-15), in both profiles
+;   G3DATA(m [,o])             model m (16-31) from DATA lines, to VRAM
+;   G3FRAME [(v)]              spin, draw on the hidden page, show it at the
+;                              vertical blank (v blanks per frame)
+;   (bank 1 code: g3bank1.asm)
 ; Profiles (spec section 2), looked for at boot and at every G3INIT, 88h first:
 ;   88h  V9968 cartridge at 88h-8Ch, geo3d at 8Dh/8Fh. The internal VDP is
 ;        never touched, so this profile also works on MSX1.
 ;   98h  the V9968 is the machine's VDP (98h-9Ch), geo3d at 9Dh/9Fh.
 ;
 ; ROM: 64 KB ASCII8 MegaROM (openMSX -romtype ASCII8). Bank 0 is the fixed
-; code bank at 4000h-5FFFh and holds everything for now. Banks 1-7 are
-; reserved (FFh) for data mapped at 6000h-7FFFh later (built-in models, the
-; G3TITLE font, texture 0). The mapper powers on with bank 0 in all four
-; windows, so INIT first maps bank 1 at 6000h, 8000h and A000h: otherwise
-; the BIOS finds our "AB" again at 8000h, runs INIT twice and calls the
-; STATEMENT handler twice per CALL. Page 2 is never mapped after that.
+; code bank at 4000h-5FFFh: the frame, the hooks, the argument reader, the
+; VDP routines. Bank 1 (6000h-7FFFh) holds the scene commands and their math
+; (g3bank1.asm); it is mapped at 6000h by INIT and again before every
+; command. Bank 2 is the sine table (a quarter wave, 4096 words, made by
+; gen_tables.py), mapped at 6000h only inside getsin. Banks 3-7 are
+; reserved (FFh) for data (built-in models, the G3TITLE font, texture 0).
+; The mapper powers on with bank 0 in all four windows, so INIT first maps
+; bank 3 at 8000h and A000h: otherwise the BIOS finds our "AB" again at
+; 8000h, runs INIT twice and calls the STATEMENT handler twice per CALL.
+; Page 2 is never mapped after that.
 ;
 ; RAM (spec 7.6, corrected by the research notes):
 ;   Work area: WKSIZE bytes of page-3 RAM just under HIMEM. It is reserved
@@ -30,7 +46,19 @@
 ;   is not enough (BASIC's file table, string space and stack are laid out
 ;   from HIMEM before the ROM search). The work area address is kept in our
 ;   page-1 SLTWRK entry; G3INIT writes its contents (signature, slot, the
-;   page-3 trampoline, scene state), and every command checks it.
+;   page-3 trampoline, scene state), and every command checks it. Layout
+;   (the W_ equates): 0-127 system (flags, port, scene defaults, argument
+;   reader, VDP command block, flip state, trampoline), 128-895 16 objects
+;   of 48 bytes (O_ equates), 896-1151 the scene state reached through IY
+;   (camera matrix, light in camera space, ramp starts, what geo3d holds,
+;   math scratch, the G3DATA block), 1152-1407 the directory of models
+;   16-31, 1408-1424 two routines copied to RAM at G3INIT (the VRAM to
+;   geo3d upload loop with its ports, the DATA number reader for the
+;   trampoline). 1425 of the 2048 bytes are used.
+; VRAM: models 16-31 in page 7 (38000h-3FFFFh, 32 KB, g3bank1.asm has the
+;   format); lines 0-211 of pages 0 and 1 are the frames (G3DATA also uses
+;   lines 0-63 of the page G3FRAME draws on next as a scratch bitmap, and
+;   clears them again); lines 212-255 are never written.
 ;   SLTWRK group of our slot (8 bytes at FD09h + 32*P + 8*S, all ours: the
 ;   ROM is in pages 1 and 2 of its slot, nothing is in pages 0 and 3):
 ;     +0 flags   bit 0: our H.TIMI hook is in the chain
@@ -56,13 +84,24 @@
 ;           (CALLF or JP formats), inert unless a G3INIT is active. G3END
 ;           leaves it installed, as the spec asks, so that hooks chained
 ;           after it keep working. A G3INIT puts it back if a program took
-;           it out (H.TIMI back to RET or to the hook we chain to).
+;           it out (H.TIMI back to RET or to the hook we chain to). In the
+;           98h profile it counts the blanks and shows the page G3FRAME
+;           drew once enough blanks went by (R#2, RG2SAV, DPPAGE, ACPAGE).
 ;
 ; BASIC calls (spec 7.7): RST 08h, 10h and 28h lead into the BASIC ROM in
 ; page 1, where this ROM sits, and hang: CHRGTR, FRMEVL, FRESTR and ERROR go
-; through CALBAS. Page-0 routines that jump into page 1 (FRCINT, FOUT, ...)
-; need the trampoline in the work area (tramp); numbers are converted here
-; instead (dacint: all numeric types, rounded, Overflow).
+; through CALBAS. Page-0 routines that jump into page 1 (FRCINT, FOUT, FIN,
+; ...) need the trampoline in the work area (tramp); numbers are converted
+; here instead (dacint: all numeric types, rounded, Overflow; dacang:
+; degrees to 65536 units per turn).
+; G3DATA reads DATA the way BASIC's READ (4B9Fh) does, with READ's own
+; variables and routines, the same at these addresses in MSX-BASIC 1.0 to
+; 4.0 (checked on the four test machines): DATPTR (F6C8h, at the character
+; after the last item read), DATLIN (F6A3h), the DATA statement scan 485Bh
+; (to the end of a statement, through CALBAS), CHRGTR, FIN (3299h, the
+; Math-Pack number reader, through the trampoline: it uses RST 10h), Out of
+; DATA (error 4, as READ gives it) and 404Fh (Syntax error with CURLIN =
+; DATLIN: READ's error for an item that is not a number).
 ;
 ; VDP rules (spec 7.2, 7.3): the command handler starts with EI, every wait
 ; has a loop timeout of about 2 s (Device I/O error, also on the R800) and
@@ -78,12 +117,13 @@
 ; Fixed addresses (breakpoints in tests.tcl): 4010h "G3BASIC" id, 4020h
 ; INIT, 4023h STATEMENT, 4026h H.CLEA, 4029h H.TIMI, 402Dh "not ours" exit.
 ;
-; Build: build.sh (z80asm -o out/G3BASIC.ROM g3basic.asm, 65536 bytes).
-; Tests: run_tests.sh (openMSX: turbo R 98h; MSX2+, MSX2, MSX1 88h).
+; Build: build.sh (gen_tables.py, then z80asm -o out/G3BASIC.ROM
+; g3basic.asm, 65536 bytes). Tests: run_tests.sh (openMSX: turbo R 98h;
+; MSX2+, MSX2, MSX1 88h), then check_frames.py (VRAM against the reference).
 ; ============================================================================
 
 VER_MAJ: equ 0
-VER_MIN: equ 1
+VER_MIN: equ 2
 
 ; ---- BIOS (page 0) ---------------------------------------------------------
 CALSLT:  equ 0x001C              ; call IX in slot IYH
@@ -107,13 +147,20 @@ ERROR:   equ 0x406F              ; error E
 CHRGTR:  equ 0x4666              ; next character at HL, spaces skipped
 FRMEVL:  equ 0x4C64              ; evaluate the expression at HL
 FRESTR:  equ 0x67D0              ; free the temporary string in DAC
+DATSKP:  equ 0x485B              ; DATA: HL to the end of the statement (A)
+DATSN:   equ 0x404F              ; Syntax error in the DATA line (READ's)
+; ---- Math-Pack (page 0, jumps into page 1: through the trampoline) ---------
+FIN:     equ 0x3299              ; the number at HL into DAC, HL after it
 
 ; ---- system variables ----------------------------------------------------------
 RG2SAV:  equ 0xF3E1
 RG7SAV:  equ 0xF3E6
 BAKCLR:  equ 0xF3EA
 BDRCLR:  equ 0xF3EB
+CURLIN:  equ 0xF41C
 VALTYP:  equ 0xF663              ; type of DAC: 2 integer, 3 string, 4, 8
+DATLIN:  equ 0xF6A3              ; line of the DATA being read
+DATPTR:  equ 0xF6C8              ; READ position
 MEMSIZ:  equ 0xF672
 STKTOP:  equ 0xF674
 FRETOP:  equ 0xF69B
@@ -126,6 +173,7 @@ NULBUF:  equ 0xF862
 DPPAGE:  equ 0xFAF5
 ACPAGE:  equ 0xFAF6
 HIMEM:   equ 0xFC4A
+JIFFY:   equ 0xFC9E
 SCRMOD:  equ 0xFCAF
 EXPTBL:  equ 0xFCC1
 SLTWRK:  equ 0xFD09
@@ -139,7 +187,9 @@ RG21SAV: equ 0xFFF4
 BANK6:   equ 0x6800              ; bank at 6000h-7FFFh
 BANK8:   equ 0x7000              ; bank at 8000h-9FFFh
 BANKA:   equ 0x7800              ; bank at A000h-BFFFh
-BANK_FF: equ 1                   ; a reserved bank: FFh, no "AB"
+BANK_CODE: equ 1                 ; bank 1: code, at 6000h during commands
+BANK_SIN: equ 2                  ; bank 2: sine table (getsin only)
+BANK_FF: equ 3                   ; a reserved bank: FFh, no "AB"
 
 ; ---- work area (page 3, WKSIZE bytes, address in SLTWRK) --------------------
 WKSIZE:   equ 2048
@@ -166,14 +216,123 @@ W_CAM:    equ 24                 ; camera x, y, z
 W_LOOK:   equ 30                 ; point looked at x, y, z
 W_LIGHT:  equ 36                 ; direction of the light x, y, z
 W_ARGC:   equ 42                 ; argument reader: bit k = argument k given
+W_ARGT:   equ 43                 ; bit k: argument k is an angle (getargs)
 W_ARGV:   equ 44                 ; 8 arguments, int16
 W_TMP:    equ 60                 ; 16 bytes: VDP command block
+W_FLIP:   equ 76                 ; 98h: bit 7 a flip pending, bit 0 its page
+W_BLANK:  equ 77                 ; 98h: blanks since the last flip (to 255)
+W_LASTJ:  equ 78                 ; 88h: JIFFY at the last flip (word)
 W_TRAMP:  equ 80                 ; the trampoline (tr_tpl), 48 bytes at most
 W_OBJ:    equ 128                ; NOBJ objects of OBJSZ bytes (0 = empty)
 NOBJ:     equ 16
 OBJSZ:    equ 48
-W_FREE:   equ W_OBJ + NOBJ * OBJSZ    ; 896: model and texture directories,
-                                      ; sort list, counters (TODO)
+W_FREE:   equ W_OBJ + NOBJ * OBJSZ    ; 896
+
+; object (OBJSZ bytes; IX or HL points at it)
+O_FLAGS:  equ 0                  ; bit 0 in use, 1 hidden, 2 O_ROT is current,
+                                 ; 3 its model is a background model
+O_MODEL:  equ 1                  ; 0 pivot, 16-31
+O_STYLE:  equ 2                  ; 0 wireframe, 1 solid
+O_COLOR:  equ 3                  ; FFh: the model's colours (G3COLOR: later)
+O_POS:    equ 4                  ; x, y, z
+O_ANG:    equ 10                 ; ax, ay, az: 65536 units per turn
+O_SPIN:   equ 16                 ; added at every G3FRAME
+O_ROT:    equ 22                 ; R (Q2.14, 9 words) of O_ANG
+O_SIZE:   equ 40                 ; % (G3SIZE: later)
+O_T:      equ 42                 ; camera-space position, last G3FRAME
+
+; ---- from 896 on: IY = work area + XB reaches 896-1151 as (iy+Y_...) --------
+XB:       equ 1024
+W_CMAT:   equ 896                ; camera matrix: rows right, up, forward
+W_LCAM:   equ 914                ; light in camera space (geo3d LX, LY, LZ)
+W_RAMPS:  equ 920                ; bit c: colour c starts a 7-tone ramp
+W_MEND:   equ 922                ; bytes used in the model area
+W_RESV:   equ 924                ; model whose vertices geo3d holds (0 none)
+W_RESF:   equ 925                ; model whose faces geo3d holds
+W_RESE:   equ 926                ; model whose edges geo3d holds...
+W_RESP:   equ 927                ; ...and which pass of 255 of them
+W_NVIS:   equ 928                ; objects in W_SORT
+W_OVF:    equ 929                ; qeval: a result did not fit 16 bits
+W_FCNT:   equ 930                ; frames drawn (word)
+W_ACC:    equ 932                ; 32-bit accumulator
+W_MT:     equ 936                ; M00-M22, TX, TY, TZ of the next RUN
+W_TR:     equ 960                ; 18: sin/cos, R copy, nrm3 input and Y_SQ
+W_NQ:     equ 978                ; nrm3 output: unit vector (3 words)
+W_SORT:   equ 984                ; 16 object numbers, drawing order
+W_D:      equ 1000               ; 3 words
+W_TT:     equ 1006               ; 3 words
+W_PORTY:  equ 1012               ; copy of W_PORT
+W_CAMI:   equ 1013               ; 1: the camera matrix is the identity
+W_J0:     equ 1014               ; flip_wait: JIFFY at the start, last seen
+W_J1:     equ 1015
+W_FC:     equ 1016               ; flip88: fresh blanks seen
+W_OM:     equ 1017               ; drawobj: model, style, directory entry
+W_OS:     equ 1018
+W_MDP:    equ 1019
+W_I:      equ 1021               ; G3FRAME: object in the sort list
+W_NP:     equ 1022               ; edge passes of the model
+W_SGN:    equ 1023               ; mags: signs
+W_TP:     equ 1024               ; cross: table pointer
+W_PASS:   equ 1026               ; edge pass drawn
+W_PN:     equ 1027               ; edge passes left
+W_CAMR:   equ 1028               ; camset: rx rz fx fy fz uy dh dl (words)
+W_DB:     equ 1044               ; G3DATA block (IX, D_ offsets, 107 bytes)
+W_MDIR:   equ 1152               ; model directory: 16 x 16 bytes
+W_UK:     equ 1408               ; upload loop (10 bytes, ports patched)
+W_RN:     equ 1418               ; DATA number reader (7 bytes)
+W_END:    equ 1425
+
+Y_CMAT:   equ W_CMAT - XB
+Y_LCAM:   equ W_LCAM - XB
+Y_RAMPS:  equ W_RAMPS - XB
+Y_MEND:   equ W_MEND - XB
+Y_RESV:   equ W_RESV - XB
+Y_RESF:   equ W_RESF - XB
+Y_RESE:   equ W_RESE - XB
+Y_RESP:   equ W_RESP - XB
+Y_NVIS:   equ W_NVIS - XB
+Y_OVF:    equ W_OVF - XB
+Y_FCNT:   equ W_FCNT - XB
+Y_ACC:    equ W_ACC - XB
+Y_MT:     equ W_MT - XB
+Y_TR:     equ W_TR - XB
+Y_SX:     equ Y_TR + 0
+Y_CX:     equ Y_TR + 2
+Y_SY:     equ Y_TR + 4
+Y_CY:     equ Y_TR + 6
+Y_SZ:     equ Y_TR + 8
+Y_CZ:     equ Y_TR + 10
+Y_T1:     equ Y_TR + 12
+Y_T2:     equ Y_TR + 14
+Y_ONE:    equ Y_TR + 16
+Y_N:      equ Y_TR               ; 3 x 32 bits
+Y_SQ:     equ Y_TR + 12          ; 32 bits
+Y_NQ:     equ W_NQ - XB
+Y_SORT:   equ W_SORT - XB
+Y_D:      equ W_D - XB
+Y_TT:     equ W_TT - XB
+Y_PORT:   equ W_PORTY - XB
+Y_CAMI:   equ W_CAMI - XB
+Y_J0:     equ W_J0 - XB
+Y_J1:     equ W_J1 - XB
+Y_FC:     equ W_FC - XB
+Y_OM:     equ W_OM - XB
+Y_OS:     equ W_OS - XB
+Y_MDP:    equ W_MDP - XB
+Y_I:      equ W_I - XB
+Y_NP:     equ W_NP - XB
+Y_SGN:    equ W_SGN - XB
+Y_TP:     equ W_TP - XB
+Y_PASS:   equ W_PASS - XB
+Y_PN:     equ W_PN - XB
+Y_RX:     equ W_CAMR - XB + 0
+Y_RZ:     equ W_CAMR - XB + 2
+Y_FX:     equ W_CAMR - XB + 4    ; fx, fy, fz in this order
+Y_FY:     equ W_CAMR - XB + 6
+Y_FZ:     equ W_CAMR - XB + 8
+Y_UY:     equ W_CAMR - XB + 10
+Y_DH:     equ W_CAMR - XB + 12
+Y_DL:     equ W_CAMR - XB + 14
 
 ; ---- SLTWRK group ------------------------------------------------------------
 G_FLAGS:  equ 0                  ; bits: see the header
@@ -188,12 +347,14 @@ GF_98:    equ 4
 
 ; ---- BASIC error codes ---------------------------------------------------------
 ERRSN:    equ 2                  ; Syntax error
+ERROD:    equ 4                  ; Out of DATA
 ERRFC:    equ 5                  ; Illegal function call
 ERROV:    equ 6                  ; Overflow
 ERROM:    equ 7                  ; Out of memory
 ERRTM:    equ 13                 ; Type mismatch
 ERRIO:    equ 19                 ; Device I/O error
 T_ELSE:   equ 0xA1               ; ELSE token
+T_DATA:   equ 0x84               ; DATA token
 
 ; ============================================================================
 ; bank 0: 4000h-5FFFh
@@ -220,8 +381,9 @@ pass:   scf                     ; 402Ch: STATEMENT, not ours:
 ; INIT: runs once at boot, with interrupts off, before BASIC starts.
 ; ============================================================================
 do_init:
-        ld a,BANK_FF
+        ld a,BANK_CODE
         ld (BANK6),a
+        ld a,BANK_FF
         ld (BANK8),a            ; no second "AB" at 8000h (see the header)
         ld (BANKA),a
         call getslt
@@ -290,45 +452,57 @@ ban_nw: defb "H.CLEA in use: no work area", 13, 10, 0
 ; H.CLEA handler: BASIC CLEARC (62A1h) at boot, NEW, RUN, CLEAR, CLEAR n,m and
 ; every program line typed. Keeps all registers (BASIC uses HL at 62A4h).
 ; Never writes the work area: at the first call its space still holds the
-; live stack. When a CLEAR leaves no room to put HIMEM back on the work area,
-; the area is given up (GF_SIGN cleared): G3END can still undo the V9968
-; mode from GF_UNDO, and the next G3INIT starts a clean area.
+; live stack. When HIMEM is above the work area (the first CLEARC reserves
+; it; CLEAR n,m with m above it gives it back), HIMEM goes back on it and
+; the memory is laid out again from there (relayout).
+; Open files: CLEARC closes BASIC's files right after this hook (through
+; FILTAB), except the program file of LOAD or RUN "file" (FCB 0, open
+; during its NEW). An open file is never moved: when the file table stays
+; where it is (CLEAR n,m once the area is reserved), its FCBs stay as they
+; are, for BASIC to close; when it would move (the first CLEARC is the NEW
+; of AUTOEXEC.BAS at boot: nothing is reserved yet, the RUN after the load
+; does it), nothing is done now.
+; When the relayout cannot be done (no room, or an open file that would
+; move), the area is given up (GF_SIGN cleared): it is BASIC's memory now.
+; G3END can still undo the V9968 mode from GF_UNDO, and a G3INIT after the
+; next CLEARC that puts HIMEM back starts a clean area.
 ; ============================================================================
 do_clea:
         push af
         push bc
         push de
         push hl
+        call getblk             ; HL = work area (0: not reserved yet)
+        ld a,h
+        or l
+        jr nz,cl_have
+        call anyopen
+        jr nz,cl_done           ; the first CLEARC with a file open: later
+        ld hl,(HIMEM)           ; first CLEARC after the INITs (and after the
+        ld de,0 - WKSIZE        ; Disk ROMs took their share): the work area
+        add hl,de               ; goes right under HIMEM
+        push hl
         call getslt
         call wrkgrp
         inc hl
         inc hl                  ; G_BLK
-        ld e,(hl)
-        inc hl
-        ld d,(hl)
-        ld a,d
-        or e
-        jr nz,cl_have
-        push hl                 ; first CLEARC after the INITs (and after the
-        ld hl,(HIMEM)           ; Disk ROMs took their share): the work area
-        ld de,0 - WKSIZE        ; goes right under HIMEM
-        add hl,de
-        ex de,hl
-        pop hl
-        ld (hl),d
-        dec hl
+        pop de
         ld (hl),e
+        inc hl
+        ld (hl),d
+        ex de,hl
 cl_have:
+        ex de,hl                ; DE = work area
         ld hl,(HIMEM)
         or a
         sbc hl,de
         jr c,cl_done
         jr z,cl_done            ; HIMEM <= work area: still reserved
         ex de,hl
-        call relayout           ; HIMEM = work area (carry: no room, unchanged)
+        call relayout           ; HIMEM = work area (carry: not done)
         jr nc,cl_done
-        call grp                ; no room: the work area is BASIC's memory
-        res GF_SIGN,(hl)        ; now, its contents can no longer be trusted
+        call grp                ; the work area is BASIC's memory now: its
+        res GF_SIGN,(hl)        ; contents can no longer be trusted
 cl_done:
         pop hl
         pop de
@@ -336,10 +510,29 @@ cl_done:
         pop af
         ret
 
+; anyopen: NZ when one of BASIC's files 0 to MAXFILES is open (the mode byte
+; of its FCB is not 0).
+anyopen:
+        ld a,(MAXFIL)
+        ld b,a
+        inc b
+        ld hl,(FILTAB)
+ao_1:   ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld a,(de)
+        or a
+        ret nz
+        djnz ao_1
+        ret
+
 ; relayout: HIMEM = HL, then FILTAB, the FCBs, NULBUF, MEMSIZ and STKTOP from
 ; it, keeping the string space size, as BASIC's 7E6Bh (MAXFILES=) does but
-; without touching SP (CLEARC sets FRETOP and SP right after H.CLEA).
-; Carry: not enough memory (the 7E6Bh test), nothing changed.
+; without touching SP (CLEARC sets FRETOP and SP right after H.CLEA). When
+; FILTAB stays where it is, its pointers and FCBs are kept (open files
+; stay open, for CLEARC to close). Carry, nothing changed: not enough
+; memory (the 7E6Bh test), or FILTAB would move with a file open.
 relayout:
         push hl                 ; new HIMEM
         ld a,(MAXFIL)
@@ -348,6 +541,18 @@ rl_1:   add hl,de
         dec a
         jp p,rl_1
         ex de,hl                ; DE = new FILTAB
+        ld hl,(FILTAB)
+        or a
+        sbc hl,de
+        jr z,rl_room            ; the file table stays
+        push de
+        call anyopen
+        pop de
+        jr z,rl_room
+        pop hl                  ; an open file would move: not now
+        scf
+        ret
+rl_room:
         ld hl,(MEMSIZ)
         ld bc,(STKTOP)
         or a
@@ -364,6 +569,10 @@ rl_1:   add hl,de
         ccf
         ret c
         ld (HIMEM),hl
+        ld hl,(FILTAB)
+        or a
+        sbc hl,de
+        push af                 ; Z (and NC): the file table stays
         ld (FILTAB),de
         ld l,e
         ld h,d
@@ -377,6 +586,8 @@ rl_1:   add hl,de
         dec hl
         dec hl
         ld (SAVSTK),hl
+        pop af
+        ret z                   ; pointers, FCBs and NULBUF stay
         ld a,(MAXFIL)
         ld l,a
         inc l
@@ -405,8 +616,13 @@ rl_2:   ld (hl),e
 ; ============================================================================
 ; H.TIMI handler (CALLF from FD9Fh): vertical blank only, interrupts off,
 ; A = S#0 (the BIOS stores it in STATFL afterwards: AF is kept). The BIOS
-; interrupt routine saved IX and IY. Inert for now; the 98h page flip of
-; G3FRAME goes where the TODO is. Then the hook found at G3INIT runs.
+; interrupt routine saved IX and IY. 98h, with a G3INIT active: W_BLANK
+; counts the blanks since the last flip, and the page G3FRAME drew (W_FLIP)
+; is shown once W_BLANK reaches the pace. A flip pending when SCRMOD is no
+; longer 5 is dropped: it never lands on a text screen, nor on the SCREEN 5
+; of a later RUN (G3FRAME finds the shown page in DPPAGE anyway). Then the
+; hook found at G3INIT runs. Only
+; bank 0 code runs here (6000h may hold bank 2 for a moment).
 ; ============================================================================
 do_timi:
         push af
@@ -415,8 +631,26 @@ do_timi:
         push hl
         call blkact             ; carry: no active work area (or not ours any
         jr c,ti_chain           ; more, e.g. after MSX-DOS)
-        ; TODO: pending page flip (98h): R#2, RG2SAV, DPPAGE, ACPAGE, if
-        ; SCRMOD is still the graphic mode.
+        ld a,(ix+W_PORT)
+        cp 0x98
+        jr nz,ti_chain
+        ld a,(ix+W_BLANK)
+        inc a
+        jr z,ti_1               ; stays at 255
+        ld (ix+W_BLANK),a
+ti_1:   bit 7,(ix+W_FLIP)
+        jr z,ti_chain           ; no flip pending
+        ld a,(SCRMOD)
+        cp 5
+        jr z,ti_2
+        ld (ix+W_FLIP),0        ; not SCREEN 5 any more: the flip is dropped
+        jr ti_chain
+ti_2:   ld a,(ix+W_BLANK)
+        cp (ix+W_PACE)
+        jr c,ti_chain           ; too early
+        ld a,(ix+W_FLIP)
+        and 1
+        call flip98
 ti_chain:
         call getslt
         call wrkgrp
@@ -534,6 +768,24 @@ th_cp:  ld a,(hl)
         ei
         ret
 
+; flip98: 98h: page A (0/1) shown: R#2, RG2SAV, DPPAGE, ACPAGE, W_SHOW; no
+; flip pending, no blank since. IX = work area; interrupts off (the caller).
+flip98: ld (ix+W_SHOW),a
+        ld (DPPAGE),a
+        ld (ACPAGE),a
+        rrca
+        rrca
+        rrca
+        or 0x1F
+        ld (RG2SAV),a
+        out (0x99),a
+        ld a,0x82
+        out (0x99),a
+        xor a
+        ld (ix+W_FLIP),a
+        ld (ix+W_BLANK),a
+        ret
+
 ; th_same: Z when H.TIMI holds the old hook kept in the group at HL. Keeps B.
 th_same:
         inc hl
@@ -599,7 +851,9 @@ st_inst:
         pop hl
         pop de
         jp c,err_fc             ; the command needs an active G3INIT
-st_go:  push de
+st_go:  ld a,BANK_CODE          ; bank 1 at 6000h (an error inside getsin
+        ld (BANK6),a            ; may have left the sine table there)
+        push de
         ret                     ; to the command, HL = text
 st_skip:
         ld a,(hl)               ; rest of this name
@@ -621,6 +875,26 @@ cmdtab: defb "INIT", 0, 0
         defw g3init
         defb "END", 0, 0
         defw g3end
+        defb "FRAME", 0, 1
+        defw g3frame
+        defb "ROT", 0, 1
+        defw g3rot
+        defb "POS", 0, 1
+        defw g3pos
+        defb "SPIN", 0, 1
+        defw g3spin
+        defb "OBJ", 0, 1
+        defw g3obj
+        defb "STYLE", 0, 1
+        defw g3style
+        defb "CAM", 0, 1
+        defw g3cam
+        defb "RAMP", 0, 1
+        defw g3ramp
+        defb "PAL", 0, 1
+        defw g3pal
+        defb "DATA", 0, 1
+        defw g3data
         defb 0
 
 ; ============================================================================
@@ -638,6 +912,7 @@ g3init:
         pop hl
         jp c,err_om             ; work area not reserved (HIMEM moved up)
         ld b,2
+        xor a                   ; no angles
         call getargs            ; syntax and values checked before any change
         push hl                 ; text pointer, returned at the end
         call getblk
@@ -726,6 +1001,7 @@ gi_h88: call getslt
         ld (ix+W_MODE),5
         call tr_copy
         call scene_reset        ; 16 empty objects, camera, light, window...
+        call scnx               ; no models, ramps 1 and 8, camera matrix...
         ; ---- spec section 4, steps 1 to 5
         call wait_geo           ; 1. geo3d and the VDP command engine idle
         call wait_ce
@@ -744,8 +1020,8 @@ gi_h88: call getslt
         call wait_ce
         call show0              ;    show page 0, draw on page 1
         call geo_cfg            ; 5. geo3d set up for SCREEN 5
-        ; TODO: copy texture 0 from its bank; clear the model directory
-        ; (16-31) and the texture slots (1-8) (spec steps 5 and 6).
+        ; TODO: copy texture 0 from its bank, clear the texture slots (1-8)
+        ; (spec steps 5 and 6; the model directory is cleared by scnx).
         call timi_hook
         set 0,(ix+W_FLAGS)      ; active
         pop hl
@@ -1622,15 +1898,20 @@ tramp:  push hl
 
 ; getargs: reads "[( [a0] [, [a1] ...] )]" at HL (right after the name), up to
 ; B arguments; any position may be empty. Each argument is a number of any
-; type, rounded to a signed 16-bit integer (dacint). Result in the work area:
-; W_ARGC bit k = argument k given, W_ARGV + 2k = its value. HL returns at the
-; end of the statement; Syntax error for anything else.
+; type, rounded to a signed 16-bit integer (dacint), or, when bit k of A is
+; set, an angle in degrees (dacang). Result in the work area: W_ARGC bit k =
+; argument k given, W_ARGV + 2k = its value. HL returns at the end of the
+; statement; Syntax error for anything else.
 getargs:
         push hl
+        push af
         call getblk
         ld de,W_ARGC
         add hl,de
         ld (hl),0
+        inc hl
+        pop af
+        ld (hl),a               ; W_ARGT
         pop hl
         ld c,0                  ; C = position
         dec hl
@@ -1643,7 +1924,7 @@ ga_1:   call chrgtr             ; past '(' or ','
         cp ')'
         jr z,ga_3
         push bc
-        call getint             ; DE = value, HL after the expression
+        call getval             ; DE = value, HL after the expression
         pop bc
         push hl                 ; text
         push de
@@ -1700,6 +1981,26 @@ noargs: dec hl
 
 chrgtr: ld ix,CHRGTR
         jp CALBAS
+
+; getval: DE = the expression at HL, argument C: an angle (dacang, bank 1)
+; when bit C of W_ARGT is set, else getint.
+getval: push hl
+        call getblk
+        ld de,W_ARGT
+        add hl,de
+        ld a,(hl)
+        pop hl
+        ld b,c
+        inc b
+gv_1:   rrca
+        djnz gv_1
+        jr nc,getint
+        ld ix,FRMEVL
+        call CALBAS
+        push hl
+        call dacang
+        pop hl
+        ret
 
 ; getint: DE = the expression at HL as a signed 16-bit integer.
 getint: ld ix,FRMEVL
@@ -1817,9 +2118,64 @@ err_om: ld e,ERROM
         jr error
 err_tm: ld e,ERRTM
         jr error
+err_od: ld e,ERROD
+        jr error
 err_io: ld e,ERRIO
 error:  ld ix,ERROR
         jp CALBAS
+
+; ============================================================================
+; getsin: HL = sin(HL) in Q2.14 (65536 units per turn), from the quarter
+; wave in bank 2: the angle is rounded to 1/16384 turn (4096 steps per
+; quadrant). Maps bank 2 at 6000h for the read and bank 1 back. Keeps BC,
+; DE.
+; ============================================================================
+getsin: push de
+        ld de,2
+        add hl,de
+        ld a,h
+        and 0xC0
+        push af                 ; quadrant
+        srl h
+        rr l
+        srl h
+        rr l
+        ld a,h
+        and 0x0F
+        ld h,a                  ; step 0-4095 in the quadrant
+        pop af
+        push af
+        bit 6,a
+        jr z,sn_1
+        ex de,hl                ; quadrants 1, 3: 4096 - step
+        ld hl,4096
+        or a
+        sbc hl,de
+        ld a,h
+        cp 0x10
+        jr nz,sn_1
+        ld hl,16384             ; sin 90
+        jr sn_2
+sn_1:   add hl,hl
+        ld de,0x6000
+        add hl,de
+        ld a,BANK_SIN
+        ld (BANK6),a
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        ld a,BANK_CODE
+        ld (BANK6),a
+        ex de,hl
+sn_2:   pop af
+        bit 7,a
+        jr z,sn_3
+        ex de,hl                ; quadrants 2, 3: negative
+        ld hl,0
+        or a
+        sbc hl,de
+sn_3:   pop de
+        ret
 
 ; ============================================================================
 ; Text output (banner)
@@ -1845,16 +2201,17 @@ ph_1:   and 0x0F
         daa
         jp CHPUT
 
+        include "out/g3ang.asm"      ; angtab: dacang, integer degrees
 code_end:
         defs 0x6000 - $, 0xFF   ; bank 0 must stay under 8 KB
 
 ; ============================================================================
-; banks 1-7: reserved, FFh (no "AB": INIT maps bank 1 at 8000h and A000h)
+; bank 1: code (g3bank1.asm). bank 2: sine table. banks 3-7: reserved, FFh
+; (no "AB": INIT maps bank 3 at 8000h and A000h)
 ; ============================================================================
+        include "g3bank1.asm"
         org 0x6000
-        defs 0x2000, 0xFF       ; bank 1
-        org 0x6000
-        defs 0x2000, 0xFF       ; bank 2
+sintab: include "out/g3tab.asm" ; bank 2: 4096 words (gen_tables.py)
         org 0x6000
         defs 0x2000, 0xFF       ; bank 3
         org 0x6000
