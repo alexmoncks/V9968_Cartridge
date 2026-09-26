@@ -63,6 +63,7 @@ module vdp_timing_control_sprite (
 	input		[9:0]	screen_pos_y,
 	input		[7:0]	pixel_pos_y,
 	input				screen_v_active,
+	input				sprite_overmap_v_active,
 
 	output		[17:0]	vram_address,
 	output				vram_valid,
@@ -82,6 +83,7 @@ module vdp_timing_control_sprite (
 	output		[9:0]	sprite_collision_y,
 	input				sprite_off,
 	input				clear_sprite_overmap,
+	input				sprite_overmap_enable,
 	output				sprite_overmap,
 	output		[4:0]	sprite_overmap_id,
 
@@ -211,6 +213,7 @@ module vdp_timing_control_sprite (
 		.screen_pos_y								( screen_pos_y[8:0]							),
 		.pixel_pos_y								( pixel_pos_y								),
 		.screen_v_active							( ff_screen_v_active						),
+		.screen_display_v_active					( sprite_overmap_v_active			),
 		.screen_h_active							( ff_screen_h_active						),
 		.vram_address								( w_vp_vram_address							),
 		.vram_valid									( w_vp_vram_valid							),
@@ -222,6 +225,7 @@ module vdp_timing_control_sprite (
 		.selected_count								( w_selected_count							),
 		.start_info_collect							( w_start_info_collect						),
 		.clear_sprite_overmap						( clear_sprite_overmap						),
+		.sprite_overmap_enable					( sprite_overmap_enable				),
 		.sprite_overmap								( sprite_overmap							),
 		.sprite_overmap_id							( sprite_overmap_id							),
 		.clear_sprite_collision						( clear_sprite_collision					),

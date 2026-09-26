@@ -63,6 +63,7 @@ module vdp_sprite_select_visible_planes (
 	input		[8:0]	screen_pos_y,
 	input		[7:0]	pixel_pos_y,
 	input				screen_v_active,
+	input				screen_display_v_active,
 	input				screen_h_active,
 
 	output		[17:0]	vram_address,
@@ -78,6 +79,7 @@ module vdp_sprite_select_visible_planes (
 	output				start_info_collect,
 
 	input				clear_sprite_overmap,
+	input				sprite_overmap_enable,
 	output				sprite_overmap,
 	output		[4:0]	sprite_overmap_id,
 	input				clear_sprite_collision,
@@ -111,7 +113,10 @@ module vdp_sprite_select_visible_planes (
 	reg					ff_selected_en2;
 	reg			[31:0]	ff_attribute1;
 	reg			[31:0]	ff_attribute2;
+	reg					ff_attribute_valid1;
+	reg					ff_attribute_valid2;
 	wire		[31:0]	w_attribute;
+	wire					w_attribute_valid;
 	wire		[9:0]	w_y;
 	wire		[7:0]	w_mgy;
 	wire		[9:0]	w_offset_y;
@@ -188,11 +193,14 @@ module vdp_sprite_select_visible_planes (
 		else if( !screen_v_active || !screen_h_active || !reg_display_on || w_screen_pos_x[9]  ) begin
 			//	hold
 		end
+		else if( !reg_sprite_mode3 && ff_plane_count[5] && !(w_phase == 3'd2 && w_sub_phase == 4'd0 && screen_pos_x[13:7] == 7'd0) ) begin
+			ff_vram_valid			<= 1'b0;
+		end
 		else if( w_phase == 3'd2 && w_sub_phase == 4'd0 ) begin
 			if( screen_pos_x[13:7] == 7'd0 ) begin
 				ff_plane_count			<= 6'd0;
 				ff_current_plane_num	<= reg_sprite_priority_shuffle ? ff_current_plane_num_start: 6'd0;
-				ff_vram_valid			<= 1'b1;
+				ff_vram_valid			<= reg_sprite_mode3 || ff_plane_count != 6'd31;
 			end
 			else begin
 				ff_plane_count			<= ff_plane_count + 6'd1;
@@ -202,7 +210,7 @@ module vdp_sprite_select_visible_planes (
 				else begin
 					ff_current_plane_num	<= ff_current_plane_num + (reg_sprite_priority_shuffle ? 6'd19: 6'd1 );
 				end
-				ff_vram_valid			<= ~w_selected_full;
+				ff_vram_valid			<= 1'b1;
 			end
 		end
 		else if( w_phase == 3'd4 && w_sub_phase == 4'd0 ) begin
@@ -213,7 +221,7 @@ module vdp_sprite_select_visible_planes (
 			else begin
 				ff_current_plane_num	<= ff_current_plane_num + (reg_sprite_priority_shuffle ? 6'd19: 6'd1 );
 			end
-			ff_vram_valid			<= ~w_selected_full;
+			ff_vram_valid			<= reg_sprite_mode3 || ff_plane_count != 6'd31;
 		end
 		else begin
 			ff_vram_valid		<= 1'b0;
@@ -221,6 +229,25 @@ module vdp_sprite_select_visible_planes (
 	end
 
 	assign vram_valid	= ff_vram_valid & ~reg_sprite_disable;
+
+	always @( posedge clk ) begin
+		if( !reset_n || screen_pos_x == 14'h3FFF || reg_sprite_disable ) begin
+			ff_attribute_valid1 <= 1'b0;
+			ff_attribute_valid2 <= 1'b0;
+		end
+		else if( w_phase == 3'd2 && w_sub_phase == 4'd0 ) begin
+			ff_attribute_valid1 <= 1'b0;
+		end
+		else if( w_phase == 3'd2 && w_sub_phase == 4'd1 ) begin
+			ff_attribute_valid1 <= vram_valid;
+		end
+		else if( w_phase == 3'd4 && w_sub_phase == 4'd0 ) begin
+			ff_attribute_valid2 <= 1'b0;
+		end
+		else if( w_phase == 3'd4 && w_sub_phase == 4'd1 ) begin
+			ff_attribute_valid2 <= vram_valid;
+		end
+	end
 
 	// --------------------------------------------------------------------
 	//	Receive value of attribute table
@@ -275,6 +302,7 @@ module vdp_sprite_select_visible_planes (
 	//		Phase#5 (!w_phase[1]): ff_attribute2
 	// --------------------------------------------------------------------
 	assign w_attribute		= w_phase[1] ? ff_attribute1: ff_attribute2;
+	assign w_attribute_valid	= w_phase[1] ? ff_attribute_valid1: ff_attribute_valid2;
 	assign w_y				= reg_sprite_mode3 ? w_attribute[9:0] : { 2'd0, w_attribute[7:0] };
 	assign w_mgy			= w_attribute[23:16];
 
@@ -351,19 +379,18 @@ module vdp_sprite_select_visible_planes (
 			ff_sprite_overmap_id	<= 5'h1F;
 		end
 		else if( clear_sprite_overmap ) begin
-			//	Clear sprite overmap flag on top of frame.
+			//	Clear sprite overmap flag after status #0 read.
 			ff_sprite_overmap		<= 1'b0;
-			ff_sprite_overmap_id	<= 5'h1F;
 		end
 		else if( !screen_v_active || !screen_h_active || !reg_display_on ) begin
 			//	hold
 		end
 		else if( w_phase == 3'd3 || w_phase == 3'd5 ) begin
 			if( w_sub_phase == 4'd7 ) begin
-				if( !w_invisible && w_selected_full ) begin
-					ff_sprite_overmap		<= 1'b1;
-					if( { 1'b0, ff_sprite_overmap_id } > ff_current_plane_num ) begin
-						ff_sprite_overmap_id	<= ff_current_plane_num[4:0];
+				if( sprite_overmap_enable && screen_display_v_active && !ff_select_finish && w_attribute_valid && !w_invisible && w_selected_full && (reg_sprite_mode3 || !ff_plane_count[5]) ) begin
+					if( !ff_sprite_overmap ) begin
+						ff_sprite_overmap		<= 1'b1;
+						ff_sprite_overmap_id	<= ff_current_plane_num[5] ? 5'h1F : ff_current_plane_num[4:0];
 					end
 				end
 			end

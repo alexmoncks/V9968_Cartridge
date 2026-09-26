@@ -792,3 +792,194 @@ module tb ();
 		$finish;
 	end
 endmodule
+
+module tb_sprite_overmap_status ();
+	reg clk;
+	reg reset_n;
+	reg [2:0] bus_address;
+	reg bus_ioreq;
+	reg bus_write;
+	reg bus_valid;
+	wire bus_ready;
+	wire [7:0] bus_rdata;
+	wire bus_rdata_en;
+	reg intr_frame;
+	reg sprite_overmap;
+	reg [4:0] sprite_overmap_id;
+	wire clear_sprite_overmap;
+	wire sprite_overmap_enable;
+
+	vdp_cpu_interface u_dut (
+		.reset_n(reset_n),
+		.clk(clk),
+		.bus_address(bus_address),
+		.bus_ioreq(bus_ioreq),
+		.bus_write(bus_write),
+		.bus_valid(bus_valid),
+		.bus_ready(bus_ready),
+		.bus_wdata(8'd0),
+		.bus_rdata(bus_rdata),
+		.bus_rdata_en(bus_rdata_en),
+		.vram_address(),
+		.vram_write(),
+		.vram_valid(),
+		.vram_ready(1'b0),
+		.vram_wdata(),
+		.vram_rdata(8'd0),
+		.vram_rdata_en(1'b0),
+		.palette_valid(),
+		.palette_num(),
+		.palette_r(),
+		.palette_g(),
+		.palette_b(),
+		.int_n(),
+		.intr_line(1'b0),
+		.intr_frame(intr_frame),
+		.intr_command_end(1'b0),
+		.clear_line_interrupt(1'b0),
+		.clear_sprite_collision(),
+		.sprite_collision(1'b0),
+		.clear_sprite_collision_xy(),
+		.sprite_collision_x(9'd0),
+		.sprite_collision_y(10'd0),
+		.sprite_overmap(sprite_overmap),
+		.sprite_overmap_id(sprite_overmap_id),
+		.clear_sprite_overmap(clear_sprite_overmap),
+		.sprite_overmap_enable(sprite_overmap_enable),
+		.clear_border_detect(),
+		.read_color(),
+		.register_write(),
+		.register_num(),
+		.register_data(),
+		.status_command_execute(1'b0),
+		.status_field(1'b0),
+		.status_border_detect(1'b0),
+		.status_hsync(1'b0),
+		.status_vsync(1'b0),
+		.status_transfer_ready(1'b0),
+		.status_color(8'd0),
+		.status_border_position(9'd0),
+		.vram_access_mask(1'b0),
+		.force_highspeed(1'b0),
+		.button(2'd0),
+		.reg_screen_mode(),
+		.reg_sprite_magify(),
+		.reg_sprite_16x16(),
+		.reg_display_on(),
+		.reg_pattern_name_table_base(),
+		.reg_color_table_base(),
+		.reg_pattern_generator_table_base(),
+		.reg_sprite_attribute_table_base(),
+		.reg_sprite_pattern_generator_table_base(),
+		.reg_backdrop_color(),
+		.reg_sprite_disable(),
+		.reg_color0_opaque(),
+		.reg_50hz_mode(),
+		.reg_interleaving_mode(),
+		.reg_interlace_mode(),
+		.reg_212lines_mode(),
+		.reg_text_back_color(),
+		.reg_blink_period(),
+		.reg_display_adjust(),
+		.reg_interrupt_line(),
+		.reg_vertical_offset(),
+		.reg_scroll_planes(),
+		.reg_left_mask(),
+		.reg_yjk_mode(),
+		.reg_yae_mode(),
+		.reg_command_enable(),
+		.reg_sprite_priority_shuffle(),
+		.reg_horizontal_offset_l(),
+		.reg_horizontal_offset_h(),
+		.reg_command_high_speed_mode(),
+		.reg_sprite_nonR23_mode(),
+		.reg_interrupt_line_nonR23_mode(),
+		.reg_sprite_mode3(),
+		.reg_ext_palette_mode(),
+		.reg_ext_command_mode(),
+		.reg_vram256k_mode(),
+		.reg_sprite16_mode(),
+		.reg_flat_interlace_mode(),
+		.pulse0(),
+		.pulse1(),
+		.pulse2(),
+		.pulse3(),
+		.pulse4(),
+		.pulse5(),
+		.pulse6(),
+		.pulse7()
+	);
+
+	always #5 clk = ~clk;
+	always @(posedge clk) begin
+		if (clear_sprite_overmap) sprite_overmap <= 1'b0;
+	end
+
+	task automatic read_status0;
+		input expected_overmap;
+		input [4:0] expected_id;
+		begin
+			bus_ioreq = 1'b1;
+			bus_address = 3'd1;
+			bus_write = 1'b0;
+			bus_valid = 1'b1;
+			while (bus_ready !== 1'b1) begin
+				@(posedge clk);
+				#1;
+			end
+			@(posedge clk);
+			#1;
+			if (clear_sprite_overmap !== 1'b1) begin
+				$fatal(1, "Status #0 read did not clear sprite overmap");
+			end
+			bus_valid = 1'b0;
+			@(posedge clk);
+			#1;
+			if (bus_rdata_en !== 1'b1 || bus_rdata[6] !== expected_overmap || bus_rdata[4:0] !== expected_id) begin
+				$fatal(1, "Status #0: expected overmap=%b id=%d, got data=%02X", expected_overmap, expected_id, bus_rdata);
+			end
+			bus_ioreq = 1'b0;
+			repeat (2) @(posedge clk);
+			#1;
+		end
+	endtask
+
+	initial begin
+		clk = 1'b0;
+		reset_n = 1'b0;
+		bus_address = 3'd0;
+		bus_ioreq = 1'b0;
+		bus_write = 1'b0;
+		bus_valid = 1'b0;
+		intr_frame = 1'b0;
+		sprite_overmap = 1'b0;
+		sprite_overmap_id = 5'd31;
+		repeat (3) @(posedge clk);
+		#1;
+		reset_n = 1'b1;
+		sprite_overmap = 1'b1;
+		sprite_overmap_id = 5'd6;
+		repeat (3) @(posedge clk);
+		#1;
+		intr_frame = 1'b1;
+		@(posedge clk);
+		#1;
+		intr_frame = 1'b0;
+		if (sprite_overmap_enable !== 1'b0) begin
+			$fatal(1, "Overmap detection enabled while frame interrupt is pending");
+		end
+		read_status0(1'b1, 5'd6);
+		if (sprite_overmap_enable !== 1'b1) begin
+			$fatal(1, "Overmap detection disabled after status #0 read");
+		end
+		sprite_overmap = 1'b0;
+		read_status0(1'b0, 5'd6);
+		sprite_overmap = 1'b1;
+		sprite_overmap_id = 5'd10;
+		repeat (3) @(posedge clk);
+		#1;
+		read_status0(1'b1, 5'd10);
+		$display("Sprite overmap status read test PASSED");
+		$finish;
+	end
+endmodule
