@@ -93,6 +93,8 @@ module vdp_cpu_interface (
 	output				clear_sprite_collision_xy,	//	pulse
 	input		[8:0]	sprite_collision_x,
 	input		[9:0]	sprite_collision_y,
+	output				clear_sprite_overmap,		//	pulse
+	output				sprite_overmap_enable,
 	input				sprite_overmap,
 	input		[4:0]	sprite_overmap_id,
 	output				clear_border_detect,		//	pulse
@@ -790,7 +792,8 @@ module vdp_cpu_interface (
 				ff_bus_rdata_en	<= 1'b0;
 			end
 			else if( ff_port1 ) begin
-				ff_bus_rdata	<= ff_status_register;
+				ff_bus_rdata	<= (ff_status_register_pointer == 4'd0) ?
+					{ ff_frame_interrupt, sprite_overmap, sprite_collision, sprite_overmap_id }: ff_status_register;
 				ff_bus_rdata_en	<= 1'b1;
 			end
 			else if( ff_port4 ) begin
@@ -808,6 +811,8 @@ module vdp_cpu_interface (
 		end
 	end
 
+	assign clear_sprite_overmap			= (w_read && ff_port1 && ff_status_register_pointer == 4'd0);
+	assign sprite_overmap_enable		= ~ff_frame_interrupt;
 	assign clear_sprite_collision		= (w_read && ff_port1 && ff_status_register_pointer == 4'd0);
 	assign clear_sprite_collision_xy	= (w_read && ff_port1 && ff_status_register_pointer == 4'd5);
 	assign read_color					= (w_read && ff_port1 && ff_status_register_pointer == 4'd7);

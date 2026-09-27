@@ -54,33 +54,45 @@
 // --------------------------------------------------------------------
 
 module tb ();
-	localparam		clk_base		= 1_000_000_000/42_954_540;	//	ns
+	localparam		clk_base		= 1_000_000_000/85_909_080;	//	ns
 
 	// Clock and reset
 	reg					reset_n;
-	reg					clk;					//	42.95454MHz
+	reg					clk;					//	85.90908MHz
 
 	// Input signals
-	reg			[12:0]	screen_pos_x;
+	reg			[13:0]	screen_pos_x;
+	reg			[ 8:0]	screen_pos_y;
 	reg			[ 7:0]	pixel_pos_y;
-	reg					screen_active;
+	reg					screen_v_active;
+	reg					screen_display_v_active;
+	reg					screen_h_active;
 	reg			[31:0]	vram_rdata;
+	reg					vram_interleave;
 	reg					sprite_mode2;
+	reg					reg_display_on;
+	reg					reg_sprite_disable;
 	reg					reg_sprite_magify;
 	reg					reg_sprite_16x16;
-	reg			[16:9]	reg_sprite_attribute_table_base;
+	reg			[17:7]	reg_sprite_attribute_table_base;
+	reg					reg_sprite_nonR23_mode;
+	reg					reg_sprite_mode3;
+	reg					reg_sprite16_mode;
+	reg					reg_sprite_priority_shuffle;
+	reg					clear_sprite_overmap;
+	reg					sprite_overmap_enable;
+	reg					clear_sprite_collision;
 
 	// Output signals
-	wire		[16:0]	vram_address;
+	wire		[17:0]	vram_address;
 	wire				vram_valid;
 	wire				selected_en;
-	wire		[4:0]	selected_plane_num;
-	wire		[3:0]	selected_y;
-	wire		[7:0]	selected_x;
-	wire		[7:0]	selected_pattern;
-	wire		[7:0]	selected_color;
-	wire		[3:0]	selected_count;
+	wire		[5:0]	selected_plane_num;
+	wire		[31:0]	selected_attribute;
+	wire		[4:0]	selected_count;
 	wire				start_info_collect;
+	wire				sprite_overmap;
+	wire		[4:0]	sprite_overmap_id;
 
 	// VRAM simulation
 	reg			[31:0]	sprite_attr_table [0:31];
@@ -93,23 +105,35 @@ module tb ();
 		.reset_n						( reset_n							),
 		.clk							( clk								),
 		.screen_pos_x					( screen_pos_x						),
+		.screen_pos_y					( screen_pos_y						),
 		.pixel_pos_y					( pixel_pos_y						),
-		.screen_active					( screen_active						),
+		.screen_v_active				( screen_v_active					),
+		.screen_display_v_active		( screen_display_v_active			),
+		.screen_h_active				( screen_h_active					),
 		.vram_address					( vram_address						),
 		.vram_valid						( vram_valid						),
 		.vram_rdata						( vram_rdata						),
+		.vram_interleave				( vram_interleave					),
 		.selected_en					( selected_en						),
 		.selected_plane_num				( selected_plane_num				),
-		.selected_y						( selected_y						),
-		.selected_x						( selected_x						),
-		.selected_pattern				( selected_pattern					),
-		.selected_color					( selected_color					),
+		.selected_attribute				( selected_attribute				),
 		.selected_count					( selected_count					),
 		.start_info_collect				( start_info_collect				),
+		.clear_sprite_overmap			( clear_sprite_overmap				),
+		.sprite_overmap_enable		( sprite_overmap_enable			),
+		.sprite_overmap					( sprite_overmap					),
+		.sprite_overmap_id				( sprite_overmap_id					),
+		.clear_sprite_collision			( clear_sprite_collision			),
 		.sprite_mode2					( sprite_mode2						),
+		.reg_display_on					( reg_display_on					),
+		.reg_sprite_disable				( reg_sprite_disable				),
 		.reg_sprite_magify				( reg_sprite_magify					),
 		.reg_sprite_16x16				( reg_sprite_16x16					),
-		.reg_sprite_attribute_table_base( reg_sprite_attribute_table_base	)
+		.reg_sprite_attribute_table_base( reg_sprite_attribute_table_base	),
+		.reg_sprite_nonR23_mode			( reg_sprite_nonR23_mode			),
+		.reg_sprite_mode3				( reg_sprite_mode3					),
+		.reg_sprite16_mode				( reg_sprite16_mode					),
+		.reg_sprite_priority_shuffle	( reg_sprite_priority_shuffle		)
 	);
 
 	// --------------------------------------------------------------------
@@ -143,44 +167,64 @@ module tb ();
 		begin
 			// Initialize sprite attribute table
 			for( i = 0; i < 32; i = i + 1 ) begin
-				sprite_attr_table[i] = 32'h00000000;  // All sprites off-screen initially
+				sprite_attr_table[i] = 32'h000000D8;
 			end
 			
 			// Set up some test sprites
 			// Format: [31:24]=color, [23:16]=pattern, [15:8]=x, [7:0]=y
-			sprite_attr_table[0]  = 32'h0F1040D0;  // y=208, x=64,  pattern=16, color=15 (visible)
-			sprite_attr_table[1]  = 32'h0E2050D8;  // y=216, x=80,  pattern=32, color=14 (visible)
+			sprite_attr_table[0]  = 32'h0F1040CF;  // y=207, x=64,  pattern=16, color=15 (visible at 208)
+			sprite_attr_table[1]  = 32'h0E2050D7;  // y=215, x=80,  pattern=32, color=14 (visible at 216)
 			sprite_attr_table[2]  = 32'h0D3060E0;  // y=224, x=96,  pattern=48, color=13 (not visible)
-			sprite_attr_table[3]  = 32'h0C4070C0;  // y=192, x=112, pattern=64, color=12 (visible)
-			sprite_attr_table[4]  = 32'h0B5080D0;  // y=208, x=128, pattern=80, color=11 (visible)
+			sprite_attr_table[3]  = 32'h0C4070BF;  // y=191, x=112, pattern=64, color=12 (visible at 192)
+			sprite_attr_table[4]  = 32'h0B5080CF;  // y=207, x=128, pattern=80, color=11 (visible at 208)
 		end
 	endtask
 
 	task automatic simulate_scanline;
 		input [7:0] scan_y;
+		input [31:0] expected_planes;
+		integer scan_x;
+		reg [31:0] observed_planes;
 		begin
+			observed_planes = 32'd0;
+			screen_pos_x = 14'h3FFF;
+			wait_cycles(1);
+			#1;
 			pixel_pos_y = scan_y;
-			screen_active = 1'b1;
+			screen_pos_x = 14'd0;
+			screen_v_active = 1'b1;
+			screen_h_active = 1'b1;
 			
 			$display("=== Scanning line Y=%d ===", scan_y);
 			
 			// Simulate horizontal scan (sprite collection phase)
-			for( screen_pos_x = 13'd0; screen_pos_x < 13'd2048; screen_pos_x = screen_pos_x + 13'd1 ) begin
+			for( scan_x = 0; scan_x < 4352; scan_x = scan_x + 1 ) begin
 				@( posedge clk );
 				
 				// Monitor sprite selection
 				if( selected_en ) begin
 					$display("  Sprite selected: plane=%d, y_offset=%d, x=%d, pattern=%02X, color=%02X, count=%d",
-						selected_plane_num, selected_y, selected_x, selected_pattern, selected_color, selected_count);
+						selected_plane_num, selected_attribute[7:0], selected_attribute[15:8], selected_attribute[23:16], selected_attribute[31:24], selected_count);
+					if( selected_plane_num >= 32 || observed_planes[selected_plane_num] ) begin
+						$fatal(1, "Unexpected or duplicate sprite plane %d at Y=%d", selected_plane_num, scan_y);
+					end
+					observed_planes[selected_plane_num] = 1'b1;
 				end
 				
 				if( start_info_collect ) begin
 					$display("  Info collection phase started");
 				end
+				#1;
+				screen_pos_x = scan_x + 14'd1;
 			end
 			
-			screen_active = 1'b0;
+			screen_pos_x = 14'h3FFF;
+			screen_h_active = 1'b0;
+			if( observed_planes !== expected_planes ) begin
+				$fatal(1, "Y=%d: expected planes %08X, observed %08X", scan_y, expected_planes, observed_planes);
+			end
 			wait_cycles(10);
+			#1;
 		end
 	endtask
 
@@ -193,14 +237,27 @@ module tb ();
 		// Initialize signals
 		clk = 1'b0;
 		reset_n = 1'b0;
-		screen_pos_x = 13'd0;
+		screen_pos_x = 14'd0;
+		screen_pos_y = 9'd0;
 		pixel_pos_y = 8'd0;
-		screen_active = 1'b0;
+		screen_v_active = 1'b0;
+		screen_display_v_active = 1'b1;
+		screen_h_active = 1'b0;
 		vram_rdata = 32'd0;
+		vram_interleave = 1'b0;
 		sprite_mode2 = 1'b1;
+		reg_display_on = 1'b1;
+		reg_sprite_disable = 1'b0;
 		reg_sprite_magify = 1'b0;
 		reg_sprite_16x16 = 1'b0;
-		reg_sprite_attribute_table_base = 8'h3E;  // Typical sprite attribute table base
+		reg_sprite_attribute_table_base = 11'h1F8;
+		reg_sprite_nonR23_mode = 1'b0;
+		reg_sprite_mode3 = 1'b0;
+		reg_sprite16_mode = 1'b0;
+		reg_sprite_priority_shuffle = 1'b0;
+		clear_sprite_overmap = 1'b0;
+		sprite_overmap_enable = 1'b1;
+		clear_sprite_collision = 1'b0;
 
 		// Initialize sprite table
 		initialize_sprite_table();
@@ -215,30 +272,149 @@ module tb ();
 		reg_sprite_magify = 1'b0;
 		
 		// Test scanlines with different Y positions
-		simulate_scanline(8'd208);  // Should detect sprites 0, 4
-		simulate_scanline(8'd216);  // Should detect sprite 1
-		simulate_scanline(8'd192);  // Should detect sprite 3
-		simulate_scanline(8'd100);  // Should detect no sprites
+		simulate_scanline(8'd208, 32'h00000011);
+		simulate_scanline(8'd216, 32'h00000002);
+		simulate_scanline(8'd192, 32'h00000008);
+		simulate_scanline(8'd100, 32'h00000000);
 
 		$display("=== Test 2: Magnified 8x8 sprites ===");
 		reg_sprite_magify = 1'b1;
 		
-		simulate_scanline(8'd208);  // Should detect sprites with magnification
+		simulate_scanline(8'd208, 32'h00000011);
 
 		$display("=== Test 3: 16x16 sprites ===");
 		reg_sprite_16x16 = 1'b1;
 		reg_sprite_magify = 1'b0;
 		
-		simulate_scanline(8'd208);  // Should detect 16x16 sprites
+		simulate_scanline(8'd208, 32'h00000011);
 
 		$display("=== Test 4: 16x16 magnified sprites ===");
 		reg_sprite_16x16 = 1'b1;
 		reg_sprite_magify = 1'b1;
 		
-		simulate_scanline(8'd208);  // Should detect magnified 16x16 sprites
+		simulate_scanline(8'd208, 32'h00000019);
+
+		$display("=== Test 5: Overmap limited to display lines ===");
+		sprite_mode2 = 1'b0;
+		reg_sprite_16x16 = 1'b0;
+		reg_sprite_magify = 1'b0;
+		for( i = 0; i < 32; i = i + 1 ) begin
+			sprite_attr_table[i] = 32'h000000D0;
+		end
+		for( i = 0; i < 5; i = i + 1 ) begin
+			sprite_attr_table[i] = { 8'h0F, 8'd0, 8'd64, 8'd39 };
+		end
+		screen_display_v_active = 1'b0;
+		simulate_scanline(8'd40, 32'h0000000F);
+		if( sprite_overmap !== 1'b0 || sprite_overmap_id !== 5'd31 ) begin
+			$fatal(1, "Overmap outside display: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		screen_display_v_active = 1'b1;
+		simulate_scanline(8'd40, 32'h0000000F);
+		if( sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd4 ) begin
+			$fatal(1, "Overmap inside display: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		clear_sprite_overmap = 1'b1;
+		wait_cycles(1);
+		#1;
+		clear_sprite_overmap = 1'b0;
+		if( sprite_overmap !== 1'b0 || sprite_overmap_id !== 5'd4 ) begin
+			$fatal(1, "Overmap clear: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		simulate_scanline(8'd40, 32'h0000000F);
+		if( sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd4 ) begin
+			$fatal(1, "Overmap re-detection: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+
+		$display("=== Test 6: First overmap line keeps its plane ID ===");
+		clear_sprite_overmap = 1'b1;
+		wait_cycles(1);
+		#1;
+		clear_sprite_overmap = 1'b0;
+		for( i = 0; i < 32; i = i + 1 ) begin
+			sprite_attr_table[i] = 32'h000000D0;
+		end
+		for( i = 0; i < 5; i = i + 1 ) begin
+			sprite_attr_table[i] = { 8'h0F, 8'd0, 8'd64, 8'd79 };
+		end
+		sprite_attr_table[5] = 32'h00000078;
+		for( i = 6; i <= 10; i = i + 1 ) begin
+			sprite_attr_table[i] = { 8'h0F, 8'd0, 8'd64, 8'd39 };
+		end
+		simulate_scanline(8'd40, 32'h000003C0);
+		if( sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd10 ) begin
+			$fatal(1, "First overmap line: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		simulate_scanline(8'd80, 32'h0000000F);
+		if( sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd10 ) begin
+			$fatal(1, "Later line changed first overmap ID: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+
+		$display("=== Test 7: Frame interrupt masks overmap detection ===");
+		clear_sprite_overmap = 1'b1;
+		wait_cycles(1);
+		#1;
+		clear_sprite_overmap = 1'b0;
+		sprite_overmap_enable = 1'b0;
+		simulate_scanline(8'd40, 32'h000003C0);
+		if( sprite_overmap !== 1'b0 || sprite_overmap_id !== 5'd10 ) begin
+			$fatal(1, "Overmap detected while F is set: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		sprite_overmap_enable = 1'b1;
+		simulate_scanline(8'd40, 32'h000003C0);
+		if( sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd10 ) begin
+			$fatal(1, "Overmap not detected after F clear: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+
+		$display("=== Test 8: Only planes 0-31 can cause overmap in modes 1/2 ===");
+		for( i = 0; i < 2; i = i + 1 ) begin
+			sprite_mode2 = (i != 0);
+			clear_sprite_overmap = 1'b1;
+			wait_cycles(1);
+			#1;
+			clear_sprite_overmap = 1'b0;
+			for( integer plane = 0; plane < 32; plane = plane + 1 ) begin
+				sprite_attr_table[plane] = 32'h00000078;
+			end
+			for( integer plane = 0; plane < (sprite_mode2 ? 8 : 4); plane = plane + 1 ) begin
+				sprite_attr_table[plane] = { 8'h0F, 8'd0, 8'd64, 8'd39 };
+			end
+			simulate_scanline(8'd40, sprite_mode2 ? 32'h000000FF : 32'h0000000F);
+			if( sprite_overmap !== 1'b0 ) begin
+				$fatal(1, "Mode %0d: plane 32 or later was treated as extra sprite (id=%d)", i + 1, sprite_overmap_id);
+			end
+			clear_sprite_overmap = 1'b1;
+			wait_cycles(1);
+			#1;
+			clear_sprite_overmap = 1'b0;
+			for( integer plane = 0; plane < (sprite_mode2 ? 8 : 4); plane = plane + 1 ) begin
+				sprite_attr_table[plane] = { 8'h0F, 8'd0, 8'd64, 8'd39 };
+			end
+			sprite_attr_table[31] = { 8'h0F, 8'd0, 8'd64, 8'd39 };
+			simulate_scanline(8'd40, sprite_mode2 ? 32'h000000FF : 32'h0000000F);
+			if( sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd31 ) begin
+				$fatal(1, "Mode %0d: plane 31 was not detected as fifth sprite (overmap=%b id=%d)", i + 1, sprite_overmap, sprite_overmap_id);
+			end
+		end
+
+		$display("=== Test 9: SpriteMode3 still reports overmap ===");
+		clear_sprite_overmap = 1'b1;
+		wait_cycles(1);
+		#1;
+		clear_sprite_overmap = 1'b0;
+		reg_sprite_mode3 = 1'b1;
+		for( i = 0; i < 32; i = i + 1 ) begin
+			sprite_attr_table[i] = 32'h00000028;
+		end
+		simulate_scanline(8'd40, 32'h0000FFFF);
+		if( sprite_overmap !== 1'b1 ) begin
+			$fatal(1, "SpriteMode3 overflow flag not set");
+		end
 
 		$display("=== Test completed ===");
-		wait_cycles(100);
+		repeat( 500 ) begin
+			wait_cycles(1368 * 4);
+		end
 		$finish;
 	end
 

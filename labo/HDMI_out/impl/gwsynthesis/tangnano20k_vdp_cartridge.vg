@@ -1,15 +1,15 @@
 //
 //Written by GowinSynthesis
-//Tool Version "V1.9.11.02 (64-bit)"
-//Wed Feb 25 20:33:06 2026
+//Tool Version "V1.9.12.03 (64-bit)"
+//Mon Sep 21 21:45:02 2026
 
 //Source file index table:
-//file0 "\D:/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/gowin_rpll/gowin_rpll.v"
-//file1 "\D:/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/gowin_rpll2/gowin_rpll2.v"
-//file2 "\D:/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/sound/sound.v"
-//file3 "\D:/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/tangnano20k_vdp_cartridge.v"
-//file4 "\D:/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/hdmi_tx/src/hdmi_tx_gw.vhd"
-//file5 "\D:/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/hdmi_tx/src/video_syncgen.vhd"
+//file0 "\C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/gowin_rpll/gowin_rpll.v"
+//file1 "\C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/gowin_rpll2/gowin_rpll2.v"
+//file2 "\C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/sound/sound.v"
+//file3 "\C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/tangnano20k_vdp_cartridge.v"
+//file4 "\C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/hdmi_tx/src/hdmi_tx_gw.vhd"
+//file5 "\C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/labo/HDMI_out/src/hdmi_tx/src/video_syncgen.vhd"
 `timescale 100 ps/100 ps
 module Gowin_rPLL (
   clk27m_d,
@@ -4766,7 +4766,7 @@ defparam ff_tone_pulse_s5.INIT=1'b0;
     .COUT(n15_3),
     .I0(ff_div[1]),
     .I1(VCC),
-    .I3(GND),
+    .I3(VCC),
     .CIN(ff_div[0]) 
 );
 defparam n15_s.ALU_MODE=0;
@@ -4775,7 +4775,7 @@ defparam n15_s.ALU_MODE=0;
     .COUT(n14_3),
     .I0(ff_div[2]),
     .I1(VCC),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n15_3) 
 );
 defparam n14_s.ALU_MODE=0;
@@ -4784,7 +4784,7 @@ defparam n14_s.ALU_MODE=0;
     .COUT(n13_3),
     .I0(ff_div[3]),
     .I1(VCC),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n14_3) 
 );
 defparam n13_s.ALU_MODE=0;
@@ -4793,7 +4793,7 @@ defparam n13_s.ALU_MODE=0;
     .COUT(n12_3),
     .I0(ff_div[4]),
     .I1(VCC),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n13_3) 
 );
 defparam n12_s.ALU_MODE=0;
@@ -4802,7 +4802,7 @@ defparam n12_s.ALU_MODE=0;
     .COUT(n11_3),
     .I0(ff_div[5]),
     .I1(VCC),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n12_3) 
 );
 defparam n11_s.ALU_MODE=0;
@@ -4811,7 +4811,7 @@ defparam n11_s.ALU_MODE=0;
     .COUT(n10_3),
     .I0(ff_div[6]),
     .I1(VCC),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n11_3) 
 );
 defparam n10_s.ALU_MODE=0;
@@ -4820,7 +4820,7 @@ defparam n10_s.ALU_MODE=0;
     .COUT(n9_3),
     .I0(ff_div[7]),
     .I1(VCC),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n10_3) 
 );
 defparam n9_s.ALU_MODE=0;
@@ -4829,7 +4829,7 @@ defparam n9_s.ALU_MODE=0;
     .COUT(n8_3),
     .I0(ff_div[8]),
     .I1(VCC),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n9_3) 
 );
 defparam n8_s.ALU_MODE=0;
@@ -4838,7 +4838,7 @@ defparam n8_s.ALU_MODE=0;
     .COUT(n7_0_COUT),
     .I0(ff_div[9]),
     .I1(VCC),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n8_3) 
 );
 defparam n7_s.ALU_MODE=0;
@@ -5469,7 +5469,7 @@ defparam n123_1_s.ALU_MODE=2;
     .COUT(n70_2),
     .I0(waddr_reg[1]),
     .I1(waddr_reg[0]),
-    .I3(GND),
+    .I3(VCC),
     .CIN(GND) 
 );
 defparam n70_s.ALU_MODE=0;
@@ -5478,7 +5478,7 @@ defparam n70_s.ALU_MODE=0;
     .COUT(n69_2),
     .I0(waddr_reg[2]),
     .I1(GND),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n70_2) 
 );
 defparam n69_s.ALU_MODE=0;
@@ -5487,7 +5487,7 @@ defparam n69_s.ALU_MODE=0;
     .COUT(n68_2),
     .I0(waddr_reg[3]),
     .I1(GND),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n69_2) 
 );
 defparam n68_s.ALU_MODE=0;
@@ -5496,7 +5496,7 @@ defparam n68_s.ALU_MODE=0;
     .COUT(n67_2),
     .I0(waddr_reg[4]),
     .I1(GND),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n68_2) 
 );
 defparam n67_s.ALU_MODE=0;
@@ -5505,7 +5505,7 @@ defparam n67_s.ALU_MODE=0;
     .COUT(n66_2),
     .I0(waddr_reg[5]),
     .I1(GND),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n67_2) 
 );
 defparam n66_s.ALU_MODE=0;
@@ -5514,7 +5514,7 @@ defparam n66_s.ALU_MODE=0;
     .COUT(n65_2),
     .I0(waddr_reg[6]),
     .I1(GND),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n66_2) 
 );
 defparam n65_s.ALU_MODE=0;
@@ -5523,7 +5523,7 @@ defparam n65_s.ALU_MODE=0;
     .COUT(n64_0_COUT),
     .I0(waddr_reg[7]),
     .I1(GND),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n65_2) 
 );
 defparam n64_s.ALU_MODE=0;
@@ -6279,7 +6279,7 @@ defparam framecount_0_s1.INIT=1'b0;
     .COUT(n500_2),
     .I0(datacounter_reg[1]),
     .I1(datacounter_reg[0]),
-    .I3(GND),
+    .I3(VCC),
     .CIN(GND) 
 );
 defparam n500_s.ALU_MODE=0;
@@ -6288,7 +6288,7 @@ defparam n500_s.ALU_MODE=0;
     .COUT(n499_2),
     .I0(datacounter_reg[2]),
     .I1(GND),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n500_2) 
 );
 defparam n499_s.ALU_MODE=0;
@@ -6297,7 +6297,7 @@ defparam n499_s.ALU_MODE=0;
     .COUT(n498_2),
     .I0(datacounter_reg[3]),
     .I1(GND),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n499_2) 
 );
 defparam n498_s.ALU_MODE=0;
@@ -6306,7 +6306,7 @@ defparam n498_s.ALU_MODE=0;
     .COUT(n497_0_COUT),
     .I0(datacounter_reg[4]),
     .I1(GND),
-    .I3(GND),
+    .I3(VCC),
     .CIN(n498_2) 
 );
 defparam n497_s.ALU_MODE=0;

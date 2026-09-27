@@ -94,6 +94,8 @@ module vdp_timing_control (
 	input				clear_sprite_collision_xy,
 	output		[8:0]	sprite_collision_x,
 	output		[9:0]	sprite_collision_y,
+	input				clear_sprite_overmap,
+	input				sprite_overmap_enable,
 	output				sprite_overmap,
 	output		[4:0]	sprite_overmap_id,
 
@@ -136,6 +138,7 @@ module vdp_timing_control (
 	wire		[ 8:0]	w_pixel_pos_x;			//	unsigned (Coordinates affected by scroll register)
 	wire		[ 7:0]	w_pixel_pos_y;			//	unsigned (Coordinates affected by scroll register)
 	wire				w_screen_v_active;
+	wire				w_sprite_overmap_v_active;
 	wire		[ 2:0]	w_horizontal_offset_l;
 	wire		[ 8:3]	w_horizontal_offset_h;
 	wire				w_sprite_off;
@@ -168,6 +171,7 @@ module vdp_timing_control (
 		.pixel_pos_x								( w_pixel_pos_x								),
 		.pixel_pos_y								( w_pixel_pos_y								),
 		.screen_v_active							( w_screen_v_active							),
+		.sprite_overmap_v_active				( w_sprite_overmap_v_active			),
 		.intr_line									( intr_line									),
 		.intr_frame									( intr_frame								),
 		.clear_line_interrupt						( clear_line_interrupt						),
@@ -241,6 +245,7 @@ module vdp_timing_control (
 		.screen_pos_y								( w_screen_pos_y							),
 		.pixel_pos_y								( w_pixel_pos_y								),
 		.screen_v_active							( w_screen_v_active							),
+		.sprite_overmap_v_active				( w_sprite_overmap_v_active			),
 		.vram_address								( sprite_vram_address						),
 		.vram_valid									( sprite_vram_valid							),
 		.vram_rdata									( sprite_vram_rdata							),
@@ -256,6 +261,8 @@ module vdp_timing_control (
 		.sprite_collision_x							( sprite_collision_x						),
 		.sprite_collision_y							( sprite_collision_y						),
 		.sprite_off									( w_sprite_off								),
+		.clear_sprite_overmap						( clear_sprite_overmap						),
+		.sprite_overmap_enable					( sprite_overmap_enable				),
 		.sprite_overmap								( sprite_overmap							),
 		.sprite_overmap_id							( sprite_overmap_id							),
 		.reg_screen_mode							( reg_screen_mode							),
