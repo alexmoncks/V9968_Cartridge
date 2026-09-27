@@ -68,9 +68,9 @@ Latency: up to 49 clocks per vertex (measured in the testbench).
 
 Post-route Fmax (nextpnr): about 143 MHz (targets tested: 42.95 and 85.91 MHz, both PASS).
 
-Note: the V9968 cartridge report comes from Gowin EDA, while these numbers come
-from Yosys/nextpnr, which count resources and model timing differently. The
-definitive figure needs integration into the cartridge project and a Gowin EDA build.
+Note: these phase 1 numbers come from Yosys/nextpnr, which count resources and
+model timing differently from Gowin EDA. The Gowin EDA build of the whole
+cartridge with geo3d is in "Resources and timing" below.
 
 ## Phase 2: geo3d drives the V9968 command engine (branch `geo3d-phase2`)
 
@@ -118,12 +118,25 @@ and **8Fh** (data) with the DIP switch at 88h, or 9Dh / 9Fh at 98h.
 Offset 6 (8Eh) is left free on purpose because the MegaRAM uses it.
 
 ### Integration into the cartridge (`integration/apply_geo3d_patch.py`)
+FPGA files only; the cartridge board needs no change. Applied to HRA!'s
+upstream 86361d8, the script gives exactly the repository's `fpga/` tree:
 - `src/v9968/vdp.v`: 4 new ports; the external command-register write is OR-ed
-  into `vdp_command`, and CE is exported. With the port idle the VDP is unchanged.
-- `src/tangnano20k_vdp_cartridge.v`: instantiates `geo3d_bus` (bus side on clk85m, engine on clk42m), keeps offsets 5/7
-  away from the VDP, muxes read data and ready.
+  into `vdp_command`, and CE is exported. With the port idle the VDP is
+  unchanged (formal equivalence check and a lockstep simulation of the whole
+  cartridge).
+- `src/tangnano20k_vdp_cartridge.v`: instantiates `geo3d_bus` (bus side on
+  clk85m, engine on clk42g), keeps offsets 5/7 away from the VDP, muxes read
+  data and ready.
+- `src/gowin_rpll2/gowin_rpll2.v`: exposes the PLL's CLKOUTD (already set to
+  CLKOUT / 2 = 42.95 MHz) as `clkoutd`; the top names it clk42g and uses it only
+  for geo3d. HRA!'s clk42m (from the CLKDIV) still clocks the HDMI and his logic.
+- `src/tangnano20k_vdp_cartridge.sdc`: clk42g as a generated clock (clk14m x 3)
+  with 0.5 ns of clock uncertainty on the clk85m / clk42g crossings.
 - `tangnano20k_vdp_cartridge.gprj`: adds the three geo3d RTL files.
-The script is idempotent and byte-preserving (Shift-JIS comments, CRLF).
+
+The script is idempotent and byte-preserving (Shift-JIS comments, CRLF). On
+every run it checks the PLL settings and the SDC clocks, and it writes nothing
+if HRA!'s text has moved.
 
 ### Verification
 - 24 random scenes / 75 frames (cubes, spheres, random meshes, far and near
@@ -136,32 +149,36 @@ The script is idempotent and byte-preserving (Shift-JIS comments, CRLF).
   same LINE stepping as `vdp_command.v` (`sim/render_video.py`, which also writes an MP4).
 - Phase 1 regression (4,000 vectors) passes on the engine's immediate mode.
 
-### Resources and timing (Yosys / nextpnr, GW2AR-18)
+### Resources and timing (Gowin EDA, GW2AR-LV18QN88C8/I7)
 
-Clocks: the bus side of `geo3d_bus` and the VDP interface run on clk85m (85.9 MHz);
-the engine runs on clk42m (42.95 MHz, the cartridge's existing clk85m / 2, same
-phase and already declared in its SDC). Crossings use toggles; `sim/tb_bus.v`
-replays the scenes through the msx_slot-style handshake with both clocks running.
+Clocks: the bus side of `geo3d_bus` and the VDP interface run on clk85m
+(85.9 MHz); the engine runs on clk42g (42.95 MHz from the same PLL, CLKOUTD).
+Crossings use toggles; `sim/tb_bus.v` replays the scenes through the
+msx_slot-style handshake with both clocks running.
 
-| | Engine (P&R, all modes) | Cartridge original | Cartridge + geo3d | Delta |
-|---|---|---|---|---|
-| LUT | 6,976 | 8,750 | 13,443 | +4,693 |
-| ALU | 2,334 | 892 | 2,999 | +2,107 |
-| FF | 4,234 | 4,941 | 9,160 | +4,219 |
-| BSRAM | 12 | 8 | 20 | +12 |
-| MULT18X18 | 5 | 1 | 6 | +5 |
+Full cartridge built with Gowin EDA V1.9.12.03 on HRA!'s 86361d8, with his own
+project settings (`syn/gowin/build_gowin.sh` builds on a copy outside the
+repository and fails on any negative slack):
 
-Engine Fmax after P&R (wireframe + faces + textures): 60 MHz on clk_eng (needs
-42.95 MHz); the 85.9 MHz bus side closes above 400 MHz. Textures added 916 LUT,
-320 ALU, 689 FF and 3 BSRAM to the engine (`syn/nextpnr_engine_faces.log` vs
-`syn/nextpnr_engine_textures.log`).
+| | HRA! stock | Cartridge + geo3d |
+|---|---|---|
+| Logic (LUT + ALU) | 7,023 (34%) | 12,756 (62%) |
+| Registers | 4,219 (27%) | 7,536 (48%) |
+| CLS | 5,605 (55%) | 8,886 (86%) |
+| BSRAM / DSP | 10 / 3 | 22 / 9 |
+| Fmax clk85m (85.909 MHz needed) | 86.7 MHz | 86.3 MHz |
+| Fmax engine clock (42.955 MHz needed) | - | 64.1 MHz (clk42g) |
+| Negative-slack paths, every clock pair, setup / hold / recovery / removal | 0 | 0 |
 
-Cartridge columns: the full project synthesised with Yosys
-(`syn/cartridge/synth_cartridge.sh`), the encrypted Gowin DVI IP replaced by a
-black box. Yosys maps less densely than Gowin EDA (8,750 vs 6,009 LUT for the
-original); scaled to the Gowin report the total logic is roughly 56% of the
-device, but CLS utilisation is likely around 80-90%. It should still fit, with
-little room left. A Gowin EDA build is needed for the real figures.
+Gowin's "Total Negative Slack" summary shows 0 even when paths between clocks
+fail; the build script reads the path tables instead. With the engine on HRA!'s
+clk42m (from the CLKDIV, which has no insertion delay in Gowin's timing model)
+the same build had 73 failing paths on the geo3d crossings; that is why geo3d
+has its own clock. The open-source flow (Yosys + nextpnr) routes HRA!'s design
+but cannot place the one with geo3d (98.6% of the sites), so Gowin EDA is the
+reference. Details, the board-level check and the first power-on plan:
+[docs/cartridge_report.md](docs/cartridge_report.md)
+([Português](docs/cartridge_report.pt.md), [日本語](docs/cartridge_report.ja.md)).
 
 ## Filled, shaded faces (CTRL bit1 = 1)
 
@@ -304,29 +321,44 @@ textured spin, pan and zoom, and the fly-in. The space bar skips to the next
 demo. The picture is on the V9968 HDMI output, at 30 frames per second (the
 crawl at 0.7 of that). See [demos/](demos/README.md).
 
-- `rom/geo3d_rom.asm`: the player (about 2.1 KB, bank 0). Each demo is a
-  command stream in banks 1-30: geo3d writes, VDP register writes,
-  RLE-compressed VRAM uploads, wait-for-idle and page flips. The streams are
-  exactly the traffic checked above (the .COM demos are captured from their Z80
-  runs). Pacing uses S#0 bit7, which `vdp_cpu_interface.v` sets every frame and
-  clears on read. The menu is a stream too; its highlight is a palette change.
-- Music (`build_rom.py --music FILE.mid`, `rom/music.py`): a MIDI file is reduced
-  at build time for three targets, and at power on the player uses the best chip
-  it finds: the FM part of an OPL4 (MoonSound) or an OPL3 at C4h (18 channels,
-  F-numbers corrected for the OPL4's 49,517 Hz) plus the PSG; a Konami SCC in
-  any slot (5 channels) plus the PSG; or the PSG alone. It starts with the crawl,
-  advances one tick per vertical blank right after the page flip, fades out and
-  stops at the next demo. No music file is part of this repository; without
-  `--music` the ROM is silent.
+- `rom/geo3d_rom.asm`: the player (about 9.2 KB, bank 0). Each demo is a
+  command stream: geo3d writes, VDP register writes, RLE-compressed VRAM
+  uploads, wait-for-idle and page flips. The streams are exactly the traffic
+  checked above (the .COM demos are captured from their Z80 runs). Pacing uses
+  S#0 bit7, which `vdp_cpu_interface.v` sets every frame and clears on read.
+  The menu is a stream too; its highlight is a palette change.
+- Stream compression (`rom/g3lz.py`): the streams are packed in 8 KB G3LZ
+  blocks decoded into RAM (about 426 KB of streams take 170 KB of ROM); the
+  setup frames stay uncompressed and data shared by several demos is stored
+  once, so every page flip and every black screen falls on the same vertical
+  blank as in the uncompressed ROM, and the port traffic is identical.
+- geo3d detection: at power on the player reads the VDP ID and geo3d's status
+  before writing anything. Without geo3d (for example HRA!'s own bitstream,
+  which answers FFh) it shows a "geo3d not found" screen in English, Español and
+  Português (the 88h ROM also prints it on the MSX's own screen through the
+  BIOS) and stays there. Every wait for geo3d or the command engine gives up
+  after about 3 s and shows the same screen.
+- Music (`build_rom.py --music FILE`, MIDI or ProTracker MOD; `rom/music.py`,
+  `rom/modplay.py`, `rom/geo3d_modplay.asm`): at power on the player uses the
+  best chip it finds.
+  - A MoonSound with at least 256 KB of sample RAM plays a MOD itself: the
+    samples are uploaded during the language menu and the Z80 reads the
+    patterns row by row and runs the ProTracker effects tick by tick (including
+    vibrato and tremolo), timed by the OPL4's timer 2 at the song's own tempo.
+    The whole song loops through all demos. The build refuses a MOD whose CPU
+    cost per tick would make a demo frame late (`rom/modcost.py`).
+  - Otherwise the music is converted at build time and plays during the crawl:
+    the FM part of an OPL4 or an OPL3 at C4h plus the PSG, a Konami SCC plus
+    the PSG, or the PSG alone.
+  No music file is part of this repository; without `--music` the ROM is silent.
 - `rom/run_rom_z80.py`: runs the ROM in a Z80 emulator as an MSX would
-  (ENASLT/RSLREG, ASCII16 bank switching into page 2, V9968 and geo3d status,
-  keyboard matrix), decodes every OUT and checks: the menu picture and
-  highlight for scripted keys, each demo against its verified traffic, the
-  vertical blanks before each flip, the restart in the chosen language, the
-  space bar, and the music register writes tick by tick on the PSG, SCC or OPL
-  (`--chip psg|scc|opl`, `--opl4`), with silence in the following demos. Both
-  port profiles, three languages and three key modes pass, and 15 deliberately
-  broken players (mutants) are all caught.
+  (ENASLT/RSLREG, ASCII16 bank switching, V9968 and geo3d status, keyboard
+  matrix), decodes every OUT and checks: the menu picture and highlight for
+  scripted keys, each demo against its verified traffic (`--trace` compares
+  every IN and OUT), the vertical blanks before each flip, the restart in the
+  chosen language, the space bar, the music register writes tick by tick
+  (`--chip psg|scc|opl`, `--opl4`, `--moonsound KB` with an emulated OPL4 wave
+  part), and the "geo3d not found" path (`--absent`, `--stuck`, `--pal`).
 
 ## openMSX
 
@@ -352,23 +384,54 @@ openmsx -machine C-BIOS_V9968_JP -ext geo3d -cart GEO3D_98.ROM -romtype ASCII16
 [openmsx-v9968-windows-setup](https://github.com/renatus-xxxx/openmsx-v9968-windows-setup);
 add `-ext scc`, `-ext moonsound` or `-ext OPL3Cartridge_Moonsound_compatible`
 for the music.) Every demo plays; the GIFs in [demos/](demos/README.md) were
-captured this way. Limits: geo3d is not cycle exact there (the geometry takes no
-emulated time and commands go out as soon as the VDP is idle), the fork's VDP
-timing is approximate, and only this 98h profile is emulated, not the
-cartridge at 88h.
+captured this way. The cartridge profile at 88h is emulated too: any machine
+with `-ext HRA_V9968 -ext geo3d88` (the fork's V9968 cartridge at 88h-8Ch and
+geo3d at 8Dh/8Fh). Limits: geo3d is not cycle exact there (the geometry takes
+no emulated time and commands go out as soon as the VDP is idle), the fork's
+VDP timing is approximate, and the fork does not emulate the PORT#4 lock.
 
-Not yet checked on hardware: the geo3d bitstream built with Gowin EDA (the
-cartridge's DVI IP is encrypted, so the open toolchain cannot produce the full
-bitstream), VRAM write speed with OTIR, and the flash cartridge mapper setting
-(choose ASCII16).
+Not yet checked on hardware: the geo3d bitstream (it builds with Gowin EDA and
+closes timing, see above; the flashing steps are in the cartridge report), VRAM
+write speed with OTIR, and the flash cartridge mapper setting (ASCII16 for the
+demo ROM and the game, ASCII8 for the BASIC ROM).
 
 ### Known limits (next steps)
 - Edges crossing the near plane are skipped (needs 3D clipping before projection).
 - W <= 512, H <= 1024.
 - Not yet run on hardware (it runs in openMSX, see above).
-- The Tang Nano 20K is getting full (see resources above).
+- The Tang Nano 20K is fairly full with geo3d: 62% of the logic but 86% of the
+  CLS.
 - Texture mapping is affine (no perspective correction); a texture row is at most
   4,096 texels wide (LRMM SX is 12 bits).
+- While geo3d runs, nothing else may write R#32-R#58 (LRMM also reads R#47-R#58),
+  and CE = 0 does not mean the engine is free: wait for geo3d's status bit 0.
+
+## MSX-BASIC extension ROM (`basic/`)
+
+`basic/g3basic.asm` builds `G3BASIC.ROM` (64 KB, ASCII8 mapper), a CALL
+extension that makes geo3d usable from MSX-BASIC on both port profiles. The
+API is specified in [docs/BASIC_API.md](docs/BASIC_API.md) (Portuguese).
+Implemented so far: G3INIT, G3END, G3DATA (custom models 16-31 read from DATA
+lines), G3OBJ, G3POS, G3ROT, G3SPIN, G3CAM, G3STYLE, G3RAMP, G3PAL and
+G3FRAME. A 255-face object runs at about 20 frames per second on a 3.58 MHz
+Z80. `basic/run_tests.sh` runs 6,659 checks in openMSX on a turbo R (98h) and
+on MSX2+, MSX2 and MSX1 machines with the cartridge at 88h, including drawn
+pages compared pixel for pixel with a Python model of the ROM's math.
+
+`tools/glb2g3.py` turns a GLB/glTF model into a geo3d model within 255
+vertices and 255 faces (quadric decimation, triangle pairs folded into quads,
+colours from the texture, a SCREEN 5 palette), and `tools/g3viewer.py` wraps
+it into a BASIC program that turns it with the cursor keys.
+
+## VECTOR RAID (`game/`)
+
+A side-scrolling shooter cartridge in Z80 assembly (64 KB, ASCII16): a
+starfield intro, then the background tile scrolls in and the foreground band
+follows at twice its speed; the ship and the enemies are 3D models drawn by
+geo3d at 30 frames per second; collisions use invisible hardware sprites where
+the VDP reports them, and software boxes otherwise. Release ROMs for both port
+profiles are in `game/release/`, with the controls in `README.txt`;
+`game/tests/` runs the openMSX scenarios.
 
 ### Z80 demo
 `z80/geo3d_demo.asm` (MSX-DOS .COM, GNU z80asm): SCREEN 5 on the cartridge VDP,
@@ -396,9 +459,14 @@ Regenerate the table with a different motion in `z80/gen_tables.py`.
 - sim/render_vram.py  renders the painted VRAM pages into MP4 / GIF
 - syn/cartridge/      whole-cartridge synthesis script and Yosys reports
 - showcase/           showcase scenes, system model, videos, RTL cross-checks
-- rom/                MegaROM player, stream builder, MIDI converter (music.py), Z80-emulator check
+- rom/                MegaROM player, stream builder and compressor, music (MIDI/MOD conversion, MoonSound MOD player), Z80-emulator check
 - demos/              demo page in English, Portuguese and Spanish, GIFs captured in openMSX
 - integration/        patch that wires geo3d into the cartridge project
+- syn/gowin/          Gowin EDA build script (builds on a copy, checks every timing path)
+- basic/              MSX-BASIC CALL extension ROM and its openMSX tests
+- tools/              GLB/glTF to geo3d model converter and BASIC viewer generator
+- game/               VECTOR RAID shooter cartridge: sources, asset tools, tests, release ROMs
+- docs/               BASIC API spec, cartridge verification report (EN, PT, JA)
 - run_all.sh          reproduces everything (iverilog, python3, z80asm, pip: yowasp-yosys, yowasp-nextpnr-himbaechel-gowin, z80)
 
 Source comments are in Portuguese; English translation will follow.
