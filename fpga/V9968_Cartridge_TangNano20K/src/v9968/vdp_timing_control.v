@@ -171,7 +171,7 @@ module vdp_timing_control (
 		.pixel_pos_x								( w_pixel_pos_x								),
 		.pixel_pos_y								( w_pixel_pos_y								),
 		.screen_v_active							( w_screen_v_active							),
-		.sprite_overmap_v_active				( w_sprite_overmap_v_active			),
+		.sprite_overmap_v_active					( w_sprite_overmap_v_active					),
 		.intr_line									( intr_line									),
 		.intr_frame									( intr_frame								),
 		.clear_line_interrupt						( clear_line_interrupt						),
