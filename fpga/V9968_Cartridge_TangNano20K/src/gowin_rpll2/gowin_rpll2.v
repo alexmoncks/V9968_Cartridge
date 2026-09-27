@@ -7,14 +7,14 @@
 //Device Version: C
 //Created Time: Sat Aug  2 07:16:03 2025
 
-module Gowin_rPLL2 (clkout, lock, clkoutp, clkoutd, clkin);
+module Gowin_rPLL2 (clkout, lock, clkoutp, clkin);
 
 output clkout;
 output lock;
 output clkoutp;
-output clkoutd;	// geo3d: CLKOUT / 2 = 42.95454MHz (DYN_SDIV_SEL = 2)
 input clkin;
 
+wire clkoutd_o;
 wire clkoutd3_o;
 wire gw_vcc;
 wire gw_gnd;
@@ -26,7 +26,7 @@ rPLL rpll_inst (
     .CLKOUT(clkout),
     .LOCK(lock),
     .CLKOUTP(clkoutp),
-    .CLKOUTD(clkoutd),
+    .CLKOUTD(clkoutd_o),
     .CLKOUTD3(clkoutd3_o),
     .RESET(gw_gnd),
     .RESET_P(gw_gnd),
