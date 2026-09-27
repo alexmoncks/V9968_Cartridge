@@ -583,7 +583,6 @@ module vdp_cpu_interface (
 					else begin
 						ff_pattern_generator_table_base <= ff_1st_byte[6:0];
 					end
-					ff_pattern_generator_table_base <= ff_1st_byte[6:0];
 				end
 			6'd5:	//	R#5 = [A14][A13][A12][A11][A10][A9][A8][A7]
 				begin
@@ -674,7 +673,7 @@ module vdp_cpu_interface (
 						ff_sprite16_mode <= ff_1st_byte[7];
 					end
 				end
-			8'd21:	//	R#21 = [CEIE][N/A][N/A][N/A][N/A][N/A][N/A][N/A]
+			8'd21:	//	R#21 = [N/A][N/A][N/A][N/A][N/A][N/A][N/A][V58]
 				begin
 					if( !ff_lock_extregs ) begin
 						ff_v9958_mode <= ff_1st_byte[0];
