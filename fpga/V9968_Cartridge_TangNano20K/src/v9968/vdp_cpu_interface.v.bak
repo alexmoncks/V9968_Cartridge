@@ -792,7 +792,8 @@ module vdp_cpu_interface (
 				ff_bus_rdata_en	<= 1'b0;
 			end
 			else if( ff_port1 ) begin
-				ff_bus_rdata	<= ff_status_register;
+				ff_bus_rdata	<= (ff_status_register_pointer == 4'd0) ?
+					{ ff_frame_interrupt, sprite_overmap, sprite_collision, sprite_overmap_id }: ff_status_register;
 				ff_bus_rdata_en	<= 1'b1;
 			end
 			else if( ff_port4 ) begin
