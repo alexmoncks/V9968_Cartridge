@@ -13,6 +13,13 @@ create_generated_clock -name clk215m  -source [get_ports {clk14m}] -master_clock
 create_generated_clock -name clk85m   -source [get_ports {clk14m}] -master_clock clk14m -multiply_by 6 [get_nets {clk85m}]
 # create_generated_clock -name clk85m_n -source [get_ports {clk14m}] -master_clock clk14m -multiply_by 6 -phase 180 [get_nets {clk85m_n}]
 create_generated_clock -name clk42m   -source [get_nets {clk85m}] -master_clock clk85m -divide_by 2 [get_nets {clk42m}]
+# geo3d: engine clock = CLKOUTD of u_pll2 (CLKOUT / 2), same PLL and phase as clk85m,
+# so the geo3d_bus crossings clk85m <-> clk42g are timed as related clocks
+create_generated_clock -name clk42g   -source [get_ports {clk14m}] -master_clock clk14m -multiply_by 3 [get_nets {clk42g}]
+# geo3d: Gowin gives CLKOUTD exactly CLKOUT's insertion delay; the divider's own delay
+# is not modelled: a margin for it on the clk85m <-> clk42g crossings
+set_clock_uncertainty 0.5 -from [get_clocks {clk85m}] -to [get_clocks {clk42g}]
+set_clock_uncertainty 0.5 -from [get_clocks {clk42g}] -to [get_clocks {clk85m}]
 
 # 非同期クロックグループ宣言 → clk1とclk2間の全パスをタイミング除外
 set_clock_groups -asynchronous -group [get_clocks {clk215m}] -group [get_clocks {clk42m}]
