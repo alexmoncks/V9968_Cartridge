@@ -99,10 +99,7 @@ module msx_slot(
 	reg				ff_valid			= 1'b0;
 	reg				ff_ioreq			= 1'b0;
 	reg		[7:0]	ff_rdata			= 8'd0;
-	reg				ff_ioreq_d0			= 1'b0;
-	reg				ff_ioreq_d1			= 1'b0;
-	reg				ff_ioreq_d2			= 1'b0;
-	reg				ff_ioreq_d3			= 1'b0;
+	reg				ff_data_out			= 1'b0;
 	wire	[7:0]	w_io_address;
 
 	assign w_io_address	= (dipsw == 1'b0) ? 8'h88: 8'h98;
@@ -179,22 +176,13 @@ module msx_slot(
 
 	always @( posedge clk ) begin
 		if( !p_slot_reset_n ) begin
-			ff_ioreq_d0		<= 1'b0;
-			ff_ioreq_d1		<= 1'b0;
-			ff_ioreq_d2		<= 1'b0;
-			ff_ioreq_d3		<= 1'b0;
+			ff_data_out		<= 1'b0;
 		end
-		else if( bus_rdata_en ) begin
-			ff_ioreq_d0		<= 1'b1;
-			ff_ioreq_d1		<= 1'b1;
-			ff_ioreq_d2		<= 1'b1;
-			ff_ioreq_d3		<= 1'b1;
+		else if( bus_rdata_en && ff_iorq_rd ) begin
+			ff_data_out		<= 1'b1;
 		end
-		else if( (ff_ioreq & ff_iorq_rd) == 1'b0 ) begin
-			ff_ioreq_d0		<= 1'b0;
-			ff_ioreq_d1		<= ff_ioreq_d0;
-			ff_ioreq_d2		<= ff_ioreq_d1;
-			ff_ioreq_d3		<= ff_ioreq_d2;
+		else if( !ff_iorq_rd ) begin
+			ff_data_out		<= 1'b0;
 		end
 	end
 
@@ -215,7 +203,7 @@ module msx_slot(
 		else if( !ff_active && w_active ) begin
 			if( { ff_slot_address[7:3], 3'd0 } == w_io_address ) begin
 				ff_bus_address	<= ff_slot_address[2:0];
-				ff_ioreq		<= ff_iorq_wr | ff_iorq_rd;
+				ff_ioreq		<= 1'b1;
 				ff_valid		<= 1'b1;
 			end
 			else begin
@@ -249,9 +237,9 @@ module msx_slot(
 	assign bus_wdata		= ff_slot_data;
 	assign bus_write		= ff_write;
 	assign bus_valid		= ff_valid;
-	assign p_slot_data		= ff_ioreq_d3 ? ff_rdata: 8'hZZ;
+	assign p_slot_data		= ff_data_out ? ff_rdata: 8'hZZ;
 	assign p_slot_int		= ~int_n;
 
 	//	0: Cartridge <- CPU (Write or Idle), 1: Cartridge -> CPU (Read)
-	assign p_slot_data_dir	= ff_ioreq_d3;
+	assign p_slot_data_dir	= ff_data_out;
 endmodule

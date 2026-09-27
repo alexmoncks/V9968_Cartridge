@@ -55,6 +55,16 @@ build measures that work (modcost.py: the MOD player in the Z80 emulator,
 MSX M1 waits counted, tick by tick) and takes the MOD only if its
 heaviest stretch fits (FRAME_SLACK); else only the conversion plays.
 
+Without geo3d (HRA!'s own bitstream, no V9968 at 88h, an MSX whose VDP
+ports repeat at 9Ch-9Fh), or when geo3d or the command engine stops
+answering (a wait runs out of time), the player shows "geo3d not found" in
+the three languages and stays there: a SCREEN 5 picture (nogeo_page), a
+stream of VRLE ops ending with STOP after the demos' streams, on the VDP at
+the ROM's base when one answers there, and (88h profile, or an MSX1) the
+same text in plain ASCII through the BIOS on the MSX's own screen
+(NOGEO_BIOS, ng_msg in rom_tables.asm). streams.json has both
+("nogeo") for run_rom_z80.py --absent / --stuck.
+
 Usage: build_rom.py [--base 0x88|0x98] [--music FILE.mid|FILE.mod]
   --base 0x88  (default) real hardware, V9968 cartridge at 88h: GEO3D.ROM
   --base 0x98  emulator profile, V9968 as the machine's VDP and geo3d on
@@ -128,7 +138,7 @@ MOD_SECONDS = 600                            # and at least this long (run_rom_z
 
 OP_END, OP_GEO, OP_GEOD, OP_VREG, OP_VIND, OP_WAITGEO, OP_WAITCE = range(7)
 OP_VRLE, OP_FLIP, OP_MARK, OP_LOOP, OP_NEXTBLOCK, OP_MENU, OP_PACE, OP_MUSIC = range(7, 15)
-OP_CALL, OP_VMORE, OP_EAGER = 15, 16, 17
+OP_CALL, OP_VMORE, OP_EAGER, OP_STOP = 15, 16, 17, 18
 MUS_NEXTBANK = 0xFE                          # music data: continue in the next bank
 # Raw ops a CALL may run from another place in ROM (no page flip, no control
 # flow: the player comes back at the end of the ops called)
@@ -183,6 +193,94 @@ def menu_page():
         text((64, y + 3), "▶", fsym, 8 + i)
         text((86, y), f"{i + 1}   {name}", fopt, 5 + i)
     centred(186, "1 2 3     ↑ ↓   SPACE / RETURN", fhint, 11)
+    stars = showcase.starfield(1985, 150)
+    page = bytearray(showcase.PAGE)
+    px = img.load()
+    near = [[any(x0 <= x < x1 and y0 <= y < y1 for x0, y0, x1, y1 in boxes) for x in range(W)]
+            for y in range(H)]
+    for y in range(H):
+        for x in range(W):
+            c = px[x, y]
+            if c == 0 and not near[y][x]:
+                b = stars[y * 128 + (x >> 1)]
+                c = (b >> 4) if not (x & 1) else (b & 15)
+            page[y * 128 + (x >> 1)] |= (c << 4) if not (x & 1) else c
+    return bytes(page), img
+
+
+# ------------------------------------------------------------------ geo3d not found
+# The player shows this when geo3d does not answer (geo3d_rom.asm geo_probe,
+# hw_timeout): the picture on the VDP at the ROM's base, the BIOS text on the
+# MSX's own screen (88h profile, or an MSX1).
+NOGEO_TEXT = [                                  # the picture: headline, then the lines under it
+    ("geo3d not found", ["This ROM needs the V9968 cartridge", "with the geo3d bitstream."]),
+    ("geo3d no encontrado", ["Esta ROM necesita el cartucho V9968", "con el bitstream de geo3d."]),
+    ("geo3d não encontrado", ["Esta ROM precisa do cartucho V9968", "com o bitstream do geo3d."]),
+]
+NOGEO_BIOS = [                                  # the BIOS text: plain ASCII (any MSX font), <= 29 columns
+    "",
+    "geo3d not found.",
+    "This ROM needs the V9968",
+    "cartridge with the geo3d",
+    "bitstream.",
+    "",
+    "geo3d no encontrado.",
+    "Esta ROM necesita el",
+    "cartucho V9968 con el",
+    "bitstream de geo3d.",
+    "",
+    "geo3d nao encontrado.",
+    "Esta ROM precisa do",
+    "cartucho V9968 com o",
+    "bitstream do geo3d.",
+]
+NOGEO_PAL = ([(0, 0, 0), (2, 2, 3), (4, 4, 5), (7, 7, 7), (7, 6, 1)]   # the menu's: stars, GEO3D
+             + [(7, 4, 2)]              # 5: headlines
+             + [(5, 5, 6)]              # 6: the lines under them
+             + [(0, 0, 0)] * 9)
+
+
+def nogeo_bios():
+    """NOGEO_BIOS as CHPUT prints it: CR LF after each line"""
+    for line in NOGEO_BIOS:
+        assert len(line) <= 29 and all(32 <= ord(c) < 127 for c in line), line
+    return "".join(line + "\r\n" for line in NOGEO_BIOS)
+
+
+def nogeo_page():
+    """The "geo3d not found" picture, one SCREEN 5 page in the menu's style:
+    starfield, GEO3D, the message in English, Español and Português."""
+    from PIL import Image, ImageDraw, ImageFont
+    dv = "/usr/share/fonts/truetype/dejavu/"
+    fbig = ImageFont.truetype(dv + "DejaVuSans-Bold.ttf", 28)
+    fhead = ImageFont.truetype(dv + "DejaVuSansCondensed-Bold.ttf", 15)
+    fline = ImageFont.truetype(dv + "DejaVuSans-Bold.ttf", 11)
+    W, H = showcase.W, showcase.H
+    img = Image.new("L", (W, H), 0)
+    d = ImageDraw.Draw(img)
+    d.fontmode = "1"
+    boxes = []
+
+    def centred(y, s, fnt, colour):
+        tw = d.textlength(s, font=fnt)
+        assert tw <= W - 8, s
+        xy = ((W - tw) / 2, y)
+        d.text(xy, s, font=fnt, fill=colour)
+        x0, y0, x1, y1 = d.textbbox(xy, s, font=fnt)
+        M = 6
+        boxes.append((x0 - M, y0 - M, x1 + M, y1 + M))
+        return y1
+
+    centred(6, "GEO3D", fbig, 4)
+    y = 50
+    for head, lines in NOGEO_TEXT:
+        centred(y, head, fhead, 5)
+        yy = y + 20
+        for line in lines:
+            bottom = centred(yy, line, fline, 6)
+            yy += 15
+        y += 54
+    assert bottom <= H - 2, bottom
     stars = showcase.starfield(1985, 150)
     page = bytearray(showcase.PAGE)
     px = img.load()
@@ -503,7 +601,7 @@ def player_view(rom, bank, addr):
                     ops += called
                 else:
                     ops.append(op)
-                if op[0] in (OP_NEXTBLOCK, OP_END, OP_MENU):
+                if op[0] in (OP_NEXTBLOCK, OP_END, OP_MENU, OP_STOP):
                     break
             assert pos // BANK == (q - 1) // BANK, "a raw block across banks"
             pos = q
@@ -836,6 +934,15 @@ def main():
         table.append((name, bank, addr))
         blocks[name] = ((bank, addr), bl)
         expect[name] = expand(list(setup) + list(body) * loops)   # PACE carries over, like the player
+    # "geo3d not found": its picture on page 0, then STOP (it never returns)
+    ng_page, _ = nogeo_page()
+    bl = Blocks()
+    for op in encode([("XB", 0, bytearray(ng_page))]):
+        bl.put(op)
+    bl.put(bytes([OP_STOP]))
+    bl.end_setup()
+    nogeo_at = pk.stream(bl)
+    blocks["nogeo"] = (nogeo_at, bl)
     size_all = sum(len(b) for _, bl in blocks.values() for b in bl.blocks)
     size_raw = sum(len(b) for _, bl in blocks.values() for b, r in zip(bl.blocks, bl.raw) if r)
     nblk = sum(len(bl.blocks) for _, bl in blocks.values())
@@ -908,6 +1015,12 @@ def main():
     lines.append("pal_menu:\n\tdb " + ",".join(f"0x{x:02x}" for x in pal_bytes(MENU_PAL)))
     for name, pal, *_ in demos:
         lines.append(f"pal_{name}:\n\tdb " + ",".join(f"0x{x:02x}" for x in pal))
+    lines += ["nogeo_entry:\t\t\t; geo3d not found: the picture's stream", f"\tdb {nogeo_at[0]}",
+              f"\tdw 0x{nogeo_at[1]:04x}",
+              "pal_nogeo:\n\tdb " + ",".join(f"0x{x:02x}" for x in pal_bytes(NOGEO_PAL)),
+              "ng_msg:\t\t\t\t; and its text through the BIOS (CHPUT), 0 at the end"]
+    lines += [(f'\tdb "{line}", 13, 10' if line else "\tdb 13, 10") for line in NOGEO_BIOS]
+    lines.append("\tdb 0")
     open(os.path.join(HERE, "rom_tables.asm"), "w").write("\n".join(lines) + "\n")
     subprocess.run(["z80asm", "-o", os.path.join(OUT, f"bank0{suffix}.bin"),
                     "--label=" + os.path.join(OUT, f"labels{suffix}.txt"), "geo3d_rom.asm"],
@@ -928,7 +1041,8 @@ def main():
     open(os.path.join(OUT, rom_name), "wb").write(rom)
     json.dump({"demos": [d[0] for d in demos], "expect": expect, "table": table,
                "langs": [lang for lang, _ in LANGS], "tables": tables,
-               "music": music_ticks, "mod": mod_json, "upload_frames": UPLOAD_FRAMES},
+               "music": music_ticks, "mod": mod_json, "upload_frames": UPLOAD_FRAMES,
+               "nogeo": {"page": ng_page.hex(), "pal": pal_bytes(NOGEO_PAL), "bios": nogeo_bios()}},
               open(os.path.join(OUT, "streams.json"), "w"))
     used = sum(len(bk) for bk in pk.banks)
     free = (ROM_BANKS - nb) * BANK + pk.room()
@@ -948,6 +1062,8 @@ def main():
     print(f"  {'menu':8s} banco {menu_at[0]:3d} 0x{menu_at[1]:04x}")
     for (name, bank, addr) in table:
         print(f"  {name:8s} banco {bank:3d} 0x{addr:04x}")
+    ng_size = sum(len(b) for b in blocks["nogeo"][1].blocks)
+    print(f"  {'nogeo':8s} banco {nogeo_at[0]:3d} 0x{nogeo_at[1]:04x} (geo3d não encontrado: {ng_size} bytes)")
 
 
 def rom_bytes(rom, bank, addr, n):

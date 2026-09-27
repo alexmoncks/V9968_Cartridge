@@ -67,6 +67,7 @@ module tangnano20k_vdp_cartridge (
 	wire			pll_lock215;
 	wire			pll_lock85;
 	wire			clk42m;				//	42.95454MHz
+	wire			clk42g;				//	42.95454MHz (geo3d engine: CLKOUTD of u_pll2 = clk85m / 2)
 	wire			clk85m;				//	85.90908MHz
 	wire			clk85m_n;			//	85.90908MHz (180deg phase shift)
 	wire			clk215m;			//	214.7727MHz
@@ -158,6 +159,7 @@ module tangnano20k_vdp_cartridge (
 		.clkout			( clk85m			),		//	output clkout	85.90908MHz
 		.lock			( pll_lock85		),
 		.clkoutp		( clk85m_n			),		//	output clkoutp	85.90908MHz (180deg phase shift)
+		.clkoutd		( clk42g			),		//	output clkoutd	42.95454MHz (CLKOUT / 2, geo3d engine only)
 		.clkin			( clk14m			)		//	input clkin		14.31818MHz
     );
 
@@ -208,7 +210,7 @@ module tangnano20k_vdp_cartridge (
 
 	geo3d_bus u_geo3d (
 		.clk				( clk85m					),
-		.clk_eng			( clk42m					),
+		.clk_eng			( clk42g					),
 		.reset_n			( reset_n3					),
 		.bus_address		( w_bus_address				),
 		.bus_ioreq			( w_bus_ioreq				),

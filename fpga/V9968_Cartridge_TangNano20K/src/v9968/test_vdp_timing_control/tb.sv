@@ -70,17 +70,21 @@ module tb ();
 	wire			intr_frame;
 
 	// VRAMインターフェース
-	wire	[16:0]	screen_mode_vram_address;
+	wire	[17:0]	screen_mode_vram_address;
 	wire			screen_mode_vram_valid;
 	reg		[31:0]	screen_mode_vram_rdata;
 	wire	[7:0]	screen_mode_display_color;
 
-	wire	[16:0]	sprite_vram_address;
+	wire	[17:0]	sprite_vram_address;
 	wire			sprite_vram_valid;
 	reg		[31:0]	sprite_vram_rdata;
 	reg		[7:0]	sprite_vram_rdata8;
-	wire	[3:0]	sprite_display_color;
+	wire	[7:0]	sprite_display_color;
 	wire			sprite_display_color_en;
+	reg			test6_vram_enable;
+	reg		[31:0]	sprite_attribute_table [0:31];
+	wire			sprite_overmap;
+	wire	[4:0]	sprite_overmap_id;
 
 	//	レジスタ制御タイミング信号
 	reg				clear_sprite_collision;
@@ -101,11 +105,11 @@ module tb ();
 	reg		[4:0]	reg_screen_mode;
 	reg				reg_display_on;
 	reg				reg_color0_opaque;
-	reg		[16:10]	reg_pattern_name_table_base;
-	reg		[16:6]	reg_color_table_base;
-	reg		[16:11]	reg_pattern_generator_table_base;
-	reg		[16:7]	reg_sprite_attribute_table_base;
-	reg		[16:11]	reg_sprite_pattern_generator_table_base;
+	reg		[17:10]	reg_pattern_name_table_base;
+	reg		[17:6]	reg_color_table_base;
+	reg		[17:11]	reg_pattern_generator_table_base;
+	reg		[17:7]	reg_sprite_attribute_table_base;
+	reg		[17:11]	reg_sprite_pattern_generator_table_base;
 	reg				reg_sprite_magify;
 	reg				reg_sprite_16x16;
 	reg				reg_sprite_disable;
@@ -159,7 +163,32 @@ module tb ();
 		.reg_sprite_16x16							( reg_sprite_16x16							),
 		.reg_sprite_disable							( reg_sprite_disable						),
 		.reg_backdrop_color							( reg_backdrop_color						),
-		.reg_left_mask								( reg_left_mask								)
+		.reg_left_mask								( reg_left_mask								),
+		.pixel_phase_x								(),
+		.clear_line_interrupt						(),
+		.pre_vram_refresh							(),
+		.vram_interleave							(),
+		.status_field								(),
+		.status_hsync								(),
+		.status_vsync								(),
+		.screen_mode_display_color_en				(),
+		.screen_mode								(),
+		.sprite_display_color_transparent			(),
+		.clear_sprite_overmap						( intr_frame ),
+		.sprite_overmap_enable					( 1'b1 ),
+		.sprite_overmap							( sprite_overmap ),
+		.sprite_overmap_id						( sprite_overmap_id ),
+		.reg_interleaving_mode						( 1'b0 ),
+		.reg_blink_period							( 8'd0 ),
+		.reg_text_back_color						( 8'd0 ),
+		.reg_scroll_planes							( 1'b0 ),
+		.reg_sprite_nonR23_mode						( 1'b0 ),
+		.reg_interrupt_line_nonR23_mode				( 1'b0 ),
+		.reg_sprite_mode3							( 1'b0 ),
+		.reg_sprite16_mode							( 1'b0 ),
+		.reg_flat_interlace_mode					( 1'b0 ),
+		.reg_sprite_priority_shuffle				( 1'b0 ),
+		.reg_ext_palette_mode						( 1'b0 )
 	);
 
 	// ----------------------------------------------------------------
@@ -172,13 +201,10 @@ module tb ();
 		#(clk_base/2);
 	end
 
-	// ----------------------------------------------------------------
-	// VRAMダミーデータ生成
-	// ----------------------------------------------------------------
-	always @(*) begin
-		// テスト用のダミーデータを生成
-		screen_mode_vram_rdata = 32'h56781234;	// グラフィック4-7用データ
-		sprite_vram_rdata = 32'hFFFFFFFF;		// スプライトデータ
+	always @(posedge clk) begin
+		if (test6_vram_enable && sprite_vram_valid) begin
+			sprite_vram_rdata <= sprite_attribute_table[sprite_vram_address[6:2]];
+		end
 	end
 
 	// ----------------------------------------------------------------
@@ -187,6 +213,9 @@ module tb ();
 	initial begin
 		// 初期値設定
 		reset_n = 1'b0;
+		screen_mode_vram_rdata = 32'h56781234;
+		sprite_vram_rdata = 32'hFFFFFFFF;
+		test6_vram_enable = 1'b0;
 		reg_50hz_mode = 1'b0;					// 60Hz mode
 		reg_212lines_mode = 1'b0;				// 192 lines mode
 		reg_interlace_mode = 1'b0;				// Non-interlace
@@ -206,6 +235,9 @@ module tb ();
 		reg_sprite_magify = 0;
 		reg_sprite_16x16 = 0;
 		reg_sprite_disable = 0;
+		clear_sprite_collision = 1'b0;
+		clear_sprite_collision_xy = 1'b0;
+		sprite_vram_rdata8 = 8'd0;
 		reg_backdrop_color = 8'h0F;				// 背景色（白）
 		reg_left_mask = 1'b0;
 
@@ -229,6 +261,9 @@ module tb ();
 		
 		// テスト5: 画面モード切り替えの確認
 		test_screen_modes();
+
+		// テスト6: SCREEN1 のスプライト同一ライン超過
+		test_sprite_overmap();
 		
 		$display("=== All Tests Completed ===");
 		$finish;
@@ -279,7 +314,7 @@ module tb ();
 		
 		cycle_count_60hz = 0;
 		@(posedge intr_frame);
-		@(posedge clk);
+		@(negedge intr_frame);
 		while (!intr_frame) begin
 			@(posedge clk);
 			cycle_count_60hz = cycle_count_60hz + 1;
@@ -291,7 +326,7 @@ module tb ();
 		
 		cycle_count_50hz = 0;
 		@(posedge intr_frame);
-		@(posedge clk);
+		@(negedge intr_frame);
 		while (!intr_frame) begin
 			@(posedge clk);
 			cycle_count_50hz = cycle_count_50hz + 1;
@@ -299,6 +334,9 @@ module tb ();
 		
 		$display("60Hz mode cycles: %0d", cycle_count_60hz);
 		$display("50Hz mode cycles: %0d", cycle_count_50hz);
+		if (cycle_count_60hz == 0 || cycle_count_50hz <= cycle_count_60hz) begin
+			$fatal(1, "Invalid refresh rate measurements");
+		end
 		$display("Refresh rate test completed");
 		
 		// 60Hzモードに戻す
@@ -323,7 +361,7 @@ module tb ();
 		if (screen_pos_y == reg_interrupt_line) begin
 			$display("Interrupt line test PASSED: Line %0d", v_count);
 		end else begin
-			$display("Interrupt line test FAILED: Expected %0d, Got %0d", reg_interrupt_line, v_count);
+			$fatal(1, "Interrupt line test FAILED: Expected %0d, Got screen Y=%0d", reg_interrupt_line, screen_pos_y);
 		end
 		
 		// 割り込みライン設定を元に戻す
@@ -384,6 +422,158 @@ module tb ();
 		
 		// 画面モードを0に戻す
 		reg_screen_mode = 5'd0;
+	endtask
+
+	// ----------------------------------------------------------------
+	// テスト6: SCREEN1 の水平スプライト枚数超過
+	// ----------------------------------------------------------------
+	task test_sprite_overmap();
+		integer plane;
+		integer fifth_plane;
+		integer previous_fifth_plane;
+		integer failures;
+
+		$display("--- Test 6: Sprite Overmap (SCREEN1) ---");
+		reg_screen_mode = 5'b00000;
+		reg_sprite_attribute_table_base = 11'd0;
+		for (plane = 0; plane < 32; plane = plane + 1) begin
+			sprite_attribute_table[plane] = 32'h000000D0;
+		end
+		for (plane = 0; plane < 4; plane = plane + 1) begin
+			sprite_attribute_table[plane] = {8'h0F, 8'd0, (8'd32 + plane * 8), 8'd39};
+		end
+		test6_vram_enable = 1'b1;
+
+		@(posedge intr_frame);
+		wait (screen_pos_y == 10'd50 && screen_pos_x == 14'd0);
+		#1;
+		if (sprite_overmap !== 1'b0) begin
+			$fatal(1, "Four sprites: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+
+		@(posedge intr_frame);
+		@(posedge clk);
+		#1;
+		if (sprite_overmap !== 1'b0) begin
+			$fatal(1, "Frame clear before five sprites: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		sprite_attribute_table[4] = {8'h0F, 8'd0, 8'd64, 8'd39};
+		wait (screen_pos_y == 10'd50 && screen_pos_x == 14'd0);
+		#1;
+		if (sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd4) begin
+			$fatal(1, "Five sprites: expected overmap=1 id=4, got overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		wait (screen_pos_y == 10'd100 && screen_pos_x == 14'd0);
+		#1;
+		if (sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd4) begin
+			$fatal(1, "Overmap not held within frame: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+
+		@(posedge intr_frame);
+		@(posedge clk);
+		#1;
+		if (sprite_overmap !== 1'b0 || sprite_overmap_id !== 5'd4) begin
+			$fatal(1, "Frame clear after five sprites: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		sprite_attribute_table[4] = 32'h000000D0;
+		wait (screen_pos_y == 10'd50 && screen_pos_x == 14'd0);
+		#1;
+		if (sprite_overmap !== 1'b0 || sprite_overmap_id !== 5'd4) begin
+			$fatal(1, "Next frame with four sprites: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		failures = 0;
+		previous_fifth_plane = 4;
+		for (fifth_plane = 4; fifth_plane < 32; fifth_plane = fifth_plane + 1) begin
+			for (plane = 4; plane < 32; plane = plane + 1) begin
+				if (plane < fifth_plane) begin
+					sprite_attribute_table[plane] = 32'h00000078;
+				end else begin
+					sprite_attribute_table[plane] = 32'h000000D0;
+				end
+			end
+			sprite_attribute_table[fifth_plane] = {8'h0F, 8'd0, 8'd64, 8'd39};
+			@(posedge intr_frame);
+			@(posedge clk);
+			#1;
+			if (sprite_overmap !== 1'b0 || sprite_overmap_id !== previous_fifth_plane[4:0]) begin
+				$display("FAIL before fifth plane %0d: overmap=%b id=%d", fifth_plane, sprite_overmap, sprite_overmap_id);
+				failures = failures + 1;
+			end
+			wait (screen_pos_y == 10'd50 && screen_pos_x == 14'd0);
+			#1;
+			if (sprite_overmap !== 1'b1 || sprite_overmap_id !== fifth_plane[4:0]) begin
+				$display("FAIL fifth plane %0d: expected overmap=1 id=%0d, got overmap=%b id=%d", fifth_plane, fifth_plane, sprite_overmap, sprite_overmap_id);
+				failures = failures + 1;
+			end else begin
+				$display("Fifth plane %0d PASSED", fifth_plane);
+			end
+			previous_fifth_plane = fifth_plane;
+		end
+		for (plane = 0; plane < 32; plane = plane + 1) begin
+			sprite_attribute_table[plane] = {8'h0F, 8'd0, 8'd64, 8'd209};
+		end
+		@(posedge intr_frame);
+		wait (screen_pos_y == 10'd220 && screen_pos_x == 14'd0);
+		#1;
+		if (sprite_overmap !== 1'b0 || sprite_overmap_id !== 5'd31) begin
+			$fatal(1, "192 lines, sprites at Y=209: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		reg_vertical_offset = 8'd10;
+		@(posedge intr_frame);
+		wait (screen_pos_y == 10'd210 && screen_pos_x == 14'd0);
+		#1;
+		if (sprite_overmap !== 1'b0 || sprite_overmap_id !== 5'd31) begin
+			$fatal(1, "192 lines, offset 10, sprites at Y=209: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+
+		reg_vertical_offset = 8'd0;
+		reg_212lines_mode = 1'b1;
+		@(posedge u_dut.w_screen_v_active);
+		wait (screen_pos_y == 10'd210 && screen_pos_x == 14'd0);
+		#1;
+		if (sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd4) begin
+			$fatal(1, "212 lines, sprites at Y=209: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+
+		reg_vertical_offset = 8'd10;
+		@(posedge u_dut.w_screen_v_active);
+		wait (screen_pos_y == 10'd207 && screen_pos_x == 14'd0);
+		#1;
+		if (sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd4) begin
+			$fatal(1, "212 lines, offset 10, sprites at Y=209: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		reg_vertical_offset = 8'd0;
+		reg_212lines_mode = 1'b0;
+		@(posedge intr_frame);
+		wait (screen_pos_y == 10'd220 && screen_pos_x == 14'd0);
+		for (plane = 0; plane < 32; plane = plane + 1) begin
+			sprite_attribute_table[plane] = {8'h0F, 8'd0, 8'd64, 8'd255};
+		end
+		wait (screen_pos_y == 10'h3FF && screen_pos_x == 14'd2048);
+		#1;
+		if (u_dut.w_sprite_overmap_v_active !== 1'b1 || sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd4) begin
+			$fatal(1, "First display line not prefetched: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		@(posedge intr_frame);
+		for (plane = 0; plane < 32; plane = plane + 1) begin
+			sprite_attribute_table[plane] = {8'h0F, 8'd0, 8'd64, 8'd190};
+		end
+		wait (screen_pos_y == 10'd190 && screen_pos_x == 14'd2048);
+		#1;
+		if (u_dut.w_sprite_overmap_v_active !== 1'b1 || sprite_overmap !== 1'b1 || sprite_overmap_id !== 5'd4) begin
+			$fatal(1, "Last display line not prefetched: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		@(posedge intr_frame);
+		wait (screen_pos_y == 10'd191 && screen_pos_x == 14'd2048);
+		#1;
+		if (u_dut.w_sprite_overmap_v_active !== 1'b0 || sprite_overmap !== 1'b0) begin
+			$fatal(1, "Overmap detected after last display line: overmap=%b id=%d", sprite_overmap, sprite_overmap_id);
+		end
+		test6_vram_enable = 1'b0;
+		if (failures != 0) begin
+			$fatal(1, "Sprite overmap test FAILED: %0d mismatches in 28 candidate planes", failures);
+		end
+		$display("Sprite overmap test PASSED");
 	endtask
 
 	// ----------------------------------------------------------------

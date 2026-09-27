@@ -42,6 +42,15 @@
 ; Then the demos play in that language at 30 frames per second, in a loop.
 ; Space bar: next demo.
 ;
+; geo3d is looked for first (geo_probe, as geo3d BASIC's detect: reads only
+; until it is identified). Without it (HRA!'s own bitstream answers P+5..P+7
+; with FFh; no V9968 at 88h; a VDP whose ports repeat at 9Ch-9Fh) the ROM
+; shows "geo3d not found" in English, Español and Português (nogeo) and
+; stays there, touching no geo3d port. Every wait for geo3d (RUN) and for the
+; command engine (CE) has a time limit (wait_limit, about 3 s on a 3.58 MHz
+; Z80): when it runs out, the music stops and the same message comes up
+; (hw_timeout), instead of a black screen for ever.
+;
 ; Stream opcodes (little-endian), ports for the 88h profile:
 ;   00 END                          next demo
 ;   01 GEO   idx n data[n]          OUT 8Dh,idx then n bytes to 8Fh
@@ -90,10 +99,13 @@
 ;                                   frame an upload makes long (a demo's
 ;                                   black screen, tex's textures): its notes
 ;                                   keep their time. No traffic (op_eager)
+;   12 STOP                         the end of the "geo3d not found"
+;                                   picture's stream (nogeo): display on,
+;                                   and the ROM stays there (op_stop)
 ;
-; RAM (page 3): C000h-C054h variables, C100h-C4FFh scc_buf, C800h-E7FFh
+; RAM (page 3): C000h-C055h variables, C100h-C4FFh scc_buf, C800h-E7FFh
 ; dz_buf, E800h-EDE0h the MOD player's (MP_RAM), the stack below F000h.
-; Free: C050h, C055h-C0FFh, C500h-C7FFh and EDE1h-EEFFh (C04Eh-C04Fh: written
+; Free: C050h, C056h-C0FFh, C500h-C7FFh and EDE1h-EEFFh (C04Eh-C04Fh: written
 ; only by a --null-mod ROM, a measure).
 ;
 ; Assemble: z80asm -o bank0.bin geo3d_rom.asm (build_rom.py does it all)
@@ -120,8 +132,19 @@ OPL_A1:     equ 0xC6            ; bank 1 address
 OPL_D1:     equ 0xC7
 
 ENASLT:     equ 0x0024
+MSXVER:     equ 0x002D          ; 0 MSX1, 1 MSX2, 2 MSX2+, 3 turbo R
+INITXT:     equ 0x006C          ; SCREEN 0 (the MSX's own VDP)
+CHPUT:      equ 0x00A2          ; print A
 RSLREG:     equ 0x0138
 EXPTBL:     equ 0xFCC1
+RG9SAV:     equ 0xFFE8          ; the BIOS's copy of R#9 (NT: 50 / 60 Hz)
+
+WAIT_TURNS: equ 2               ; the waits for geo3d and the command engine:
+                                ; 65536 polls a turn (~1.6 s on a 3.58 MHz Z80,
+                                ; ~0.7 s on an R800 in ROM mode; a turbo R
+                                ; runs the cartridge's INIT on the Z80), then
+                                ; hw_timeout
+WAIT_MOD:   equ 40000           ; the same while the MOD plays (wait_limit)
 
 BANK2_SEL:  equ 0x7000          ; ASCII16: bank for 8000h-BFFFh
 
@@ -168,6 +191,8 @@ dz_probe0:  equ 0xC04E          ; (--null-mod only: a token decoded ahead starts
 dz_probe1:  equ 0xC04F          ;   and ends)
 vf_endh:    equ 0xC051          ; op_vrle_f: the end of the RLE data, high byte
 idle_hook:  equ 0xC052          ; 3 bytes: the page flip's wait's poll: RET, or JP mod_poll
+ng_vdp:     equ 0xC055          ; geo_probe: 1 = a V99x8 answers at PORT_BASE
+                                ; (the "geo3d not found" picture can go there)
 scc_buf:    equ 0xC100          ; 1 KB: this tick's SCC writes (offset, value)
 dz_buf:     equ 0xC800          ; 8 KB: the stream block being played (C800h-E7FFh)
 MP_RAM:     equ 0xE800          ; 1505 bytes: the MOD player's (geo3d_modplay.asm)
@@ -224,6 +249,8 @@ init:
         ld (vmore_jp + 1), hl
         xor a
         ld (mod_live), a
+        call geo_probe              ; the first port access: geo3d there?
+        jp nz, nogeo                ; no: the message
         call music_detect
         call psg_silence
         ld hl, menu_entry           ; the menu is a stream too (picture + MENU)
@@ -300,7 +327,7 @@ ip_raw: dec a
 op_table:
         dw op_end, op_geo, op_geod, op_vreg, op_vind, op_waitgeo, op_waitce
         dw vrle_jp, op_flip, op_mark, op_loop, op_nextblock, op_menu, op_pace
-        dw op_music, op_call, vmore_jp, op_eager
+        dw op_music, op_call, vmore_jp, op_eager, op_stop
 
 ; CALL, in a raw block: the ops at first..end-1 of a bank (raw ops of a
 ; stream placed earlier, no NEXTBLOCK among them), then the op after it.
@@ -380,12 +407,23 @@ op_vind:
         otir
         jp interp
 
+; the same polls as without a time limit (a read, then the hook and a read
+; again while busy); the count starts with the second read
 op_waitgeo:
         in a, (GEO_IDX)
         rrca
         jp nc, interp               ; bit0 = RUN busy
-        call hw_hook
-        jr op_waitgeo
+        call wait_limit
+wg_1:   call hw_hook                ; (keeps BC, DE, HL)
+        in a, (GEO_IDX)
+        rrca
+        jp nc, interp
+        dec de
+        ld a, d
+        or e
+        jr nz, wg_1
+        djnz wg_1
+        jp hw_timeout               ; geo3d busy for ~3 s: it stopped answering
 
 op_waitce:
         call wait_ce
@@ -1630,18 +1668,41 @@ vdp_wreg:                           ; A = value, B = register
         out (VDP_CTRL), a
         ret
 
-wait_ce:                            ; S#2 bit0 = CE; leaves R#15 = 0
+wait_ce:                            ; S#2 bit0 = CE; leaves R#15 = 0. Keeps HL
         ld a, 2
         ld b, 15
         call vdp_wreg
-wc1:    in a, (VDP_CTRL)
+        in a, (VDP_CTRL)
         rrca
         jr nc, wc2
-        call hw_hook                ; (S#2 is selected: no hook reads the VDP)
-        jr wc1
+        call wait_limit             ; (busy: the polls as op_waitgeo's)
+wc1:    call hw_hook                ; (S#2 is selected: no hook reads the VDP)
+        in a, (VDP_CTRL)
+        rrca
+        jr nc, wc2
+        dec de
+        ld a, d
+        or e
+        jr nz, wc1
+        djnz wc1
+        jp hw_timeout               ; CE up for ~3 s: the V9968 stopped answering
 wc2:    xor a
         ld b, 15
         jp vdp_wreg
+
+; the time limit of the waits for geo3d and for the command engine: B turns
+; of DE polls (DE = 0: 65536) until hw_timeout, about 3 s on a 3.58 MHz Z80
+; either way: WAIT_TURNS x 65536 polls, or WAIT_MOD while the MOD plays
+; (the MOD player's poll in hw_hook makes each one about 3 times as long)
+wait_limit:
+        ld b, WAIT_TURNS
+        ld de, 0
+        ld a, (mod_live)
+        or a
+        ret z
+        ld b, 1
+        ld de, WAIT_MOD
+        ret
 
 ; HL = palette (32 bytes). SCREEN 5 on the V9968, V9968 mode (LRMM,
 ; 256 KB), high-speed commands, full LRMM window, both pages cleared.
@@ -1701,6 +1762,240 @@ init_regs:
 
 window_regs:
         db 0, 0, 0, 0, 0xFF, 0x01, 0xFF, 0x07
+
+; ----------------------------------------------------------------------------
+; geo_probe: geo3d at PORT_BASE? As geo3d BASIC's detect (g3basic.asm), at
+; this ROM's base only: reads only, until geo3d is identified.
+;  1. 98h (the emulator profile): not on an MSX1 (MSXVER = 0), whose TMS9918
+;     would take the R#15 write below as a write to R#7.
+;  2. S#1 through P+1: a V99x8 answers with its ID, 0 (V9938), 2 (V9958, or
+;     a V9968 in V9958 mode) or 3 (a V9968 in V9968 mode); a port where
+;     nothing answers reads FFh (ID 1Fh). ng_vdp = 1 for ID 0, 2 and 3: the
+;     message picture can go there. geo3d needs ID 2 or 3.
+;  3. With R#15 = 2: P+5 must not read FFh (HRA!'s bitstream without geo3d
+;     drives FFh there; an empty port reads FFh too) nor have bits 3-2 = 11
+;     (a VDP whose ports repeat at P+4..P+7 returns S#2 there, whose bits
+;     3-2 always read 1; geo3d idle reads 00h). Only then P+4 is read
+;     (through such a repeat it would be a VRAM read): PORT#4 must have
+;     bits 6-3 = 0.
+;  4. The first write: index 40h to P+5, then 17 reads of P+7: LOP (45h)
+;     has 4 bits, YPAGE (46h-47h) 11 bits, and the read pointer wraps back
+;     to 40h (the 17th read equals the first).
+; Z: geo3d found. Changes AF, BC, DE.
+geo_probe:
+        xor a
+        ld (ng_vdp), a
+        if PORT_BASE == 0x98
+        ld a, (MSXVER)
+        or a
+        jr z, gp_no                 ; an MSX1: a TMS9918 at 98h
+        endif
+        ld a, 1
+        ld b, 15
+        call vdp_wreg               ; R#15 = 1
+        in a, (VDP_CTRL)            ; S#1 = FL LPS ID4-ID0 FH
+        ld e, a
+        xor a
+        ld b, 15
+        call vdp_wreg               ; R#15 = 0
+        ld a, e
+        rrca
+        and 0x1F                    ; the ID
+        ld d, a
+        cp 1
+        jr z, gp_no                 ; (a V9948)
+        cp 4
+        jr nc, gp_no                ; not a V99x8 (nothing there: 1Fh)
+        ld a, 1
+        ld (ng_vdp), a              ; a V99x8: the message picture can go there
+        ld a, d
+        or a
+        jr z, gp_no                 ; a V9938: no geo3d next to it
+        ld a, 2
+        ld b, 15
+        call vdp_wreg               ; R#15 = 2
+        in a, (GEO_IDX)             ; P+5
+        ld e, 0xFF                  ; E = PORT#4: FFh (fails) unless read below
+        cp 0xFF
+        jr z, gp_1                  ; FFh: no geo3d
+        and 0x0C
+        cp 0x0C
+        jr z, gp_1                  ; S#2 of a VDP repeated at P+4..P+7
+        in a, (VDP_PORT4)
+        ld e, a                     ; PORT#4
+gp_1:   xor a
+        ld b, 15
+        call vdp_wreg               ; R#15 = 0
+        ld a, e
+        and 0x78
+        jr nz, gp_no
+        ld a, 0x40
+        out (GEO_IDX), a            ; the first geo3d write: index 40h (VADDR)
+        in a, (GEO_DAT)             ; 40h VADDR
+        ld d, a
+        in a, (GEO_DAT)             ; 41h EADDR
+        in a, (GEO_DAT)             ; 42h NVERT
+        in a, (GEO_DAT)             ; 43h NEDGE
+        in a, (GEO_DAT)             ; 44h COLOR
+        in a, (GEO_DAT)             ; 45h LOP
+        and 0xF0
+        jr nz, gp_no
+        in a, (GEO_DAT)             ; 46h YPAGE
+        in a, (GEO_DAT)             ; 47h
+        and 0xF8
+        jr nz, gp_no
+        ld b, 8
+gp_2:   in a, (GEO_DAT)             ; 48h status, 49h version, 4Ah-4Fh counters
+        djnz gp_2
+        in a, (GEO_DAT)             ; 40h again
+        cp d
+        ret                         ; Z: geo3d
+gp_no:  or 0xFF                     ; NZ: no geo3d
+        ret
+
+; ----------------------------------------------------------------------------
+; "geo3d not found" (in English, Español and Português), and the ROM stays
+; there. From here on no geo3d port is written, and only hw_timeout reads
+; geo3d's status (P+5, no side effects).
+;   hw_timeout  a wait for geo3d's RUN or for the command engine's CE ran
+;               out of time (wait_limit): the music stops (the MOD's
+;               channels and timer, and its flags, so that the BIOS's EI
+;               below meets no pending interrupt), the command engine gets
+;               STOP (R#46 = 0: a command left hanging ends). geo3d waits
+;               for CE = 0 before each command it writes, so a geo3d held
+;               up by a hanging command goes on with the rest of its frame
+;               once the STOP frees the command engine: the picture waits
+;               for geo3d's RUN to end (up to 32768 reads of P+5, ~0.55 s
+;               on a 3.58 MHz Z80), so that nothing of that frame is drawn
+;               over it, then a second STOP ends geo3d's last command. A
+;               RUN that does not end (geo3d itself hung) gets no second
+;               STOP, which could free geo3d again while the picture goes
+;               up. (The first STOP breaks the R#32-R#58 rule only in
+;               theory: geo3d writes no register while CE is up or while it
+;               is hung.) Then the message.
+;   nogeo       geo_probe found no geo3d at power on (nothing played yet).
+; The message goes:
+;   - to the VDP at PORT_BASE when geo_probe found a V99x8 there (ng_vdp):
+;     a SCREEN 5 picture (build_rom.py nogeo_page) uploaded by a stream of
+;     VRLE ops ending with STOP, as the menu's picture, with registers any
+;     V99x8 takes (no V9968 register, no command, no PORT#4 write);
+;   - 88h profile: also to the MSX's own screen, through the BIOS (INITXT,
+;     CHPUT: the machine's font, plain ASCII, ng_msg), the only message
+;     when no VDP answers at 88h (no cartridge, or its DIP switch at 98h);
+;     98h profile: there only when no V99x8 answers at 98h (an MSX1).
+hw_timeout:
+        di
+        ld sp, 0xF000
+        call mod_stop               ; (nothing when the MOD does not play)
+        call music_stop
+        xor a
+        ld b, 46
+        call vdp_wreg               ; R#46 = 0: STOP
+        ld de, 0x8000
+ht_1:   in a, (GEO_IDX)             ; geo3d's status
+        rrca
+        jr nc, ht_2                 ; bit0 = RUN busy: over
+        dec de
+        ld a, d
+        or e
+        jr nz, ht_1
+        jr nogeo                    ; geo3d hung: no second STOP
+ht_2:   xor a
+        ld b, 46
+        call vdp_wreg               ; R#46 = 0: geo3d's last command ends
+nogeo:
+        di
+        ld sp, 0xF000
+        ld a, 0xC9
+        ld (mus_hook), a            ; RET: no poll of the MOD player
+        ld (hw_hook), a
+        ld (idle_hook), a
+        ld hl, op_vrle              ; the uploads as without the MOD
+        ld (vrle_jp + 1), hl
+        ld hl, op_vmore
+        ld (vmore_jp + 1), hl
+        if PORT_BASE == 0x88
+        call ng_text                ; the MSX's own screen
+        di
+        endif
+        ld a, (ng_vdp)
+        or a
+        jr nz, ng_pic
+        if PORT_BASE == 0x98
+        call ng_text                ; an MSX1: its own screen only
+        endif
+        di
+        jr ng_stay
+ng_pic: ld hl, ng_regs
+ngp_1:  ld a, (hl)
+        cp 0xFF
+        jr z, ngp_2
+        ld b, a
+        inc hl
+        ld a, (hl)
+        inc hl
+        call vdp_wreg
+        jr ngp_1
+ngp_2:
+        if PORT_BASE == 0x98
+        ld a, (RG9SAV)              ; the machine's own VDP: its NT bit as the
+        and 0x02                    ; BIOS set it (50 Hz on a PAL machine)
+        or 0x80                     ; 212 lines
+        ld b, 9
+        call vdp_wreg
+        endif
+        ld hl, pal_nogeo
+        ld bc, 32 * 256 + VDP_PAL
+        otir                        ; (R#16 = 0 in ng_regs)
+        ld hl, nogeo_entry          ; the picture: bank, stream (a raw block)
+        ld a, (hl)
+        call setbank2
+        inc hl
+        ld e, (hl)
+        inc hl
+        ld d, (hl)
+        ld (dz_src), de
+        call dz_block
+        jp interp                   ; its VRLE ops, then STOP
+
+; STOP: the end of the message picture's stream: display on, and here the
+; ROM stays (interrupts off, no port access)
+op_stop:
+        ld a, 0x40
+        ld b, 1
+        call vdp_wreg               ; R#1: display on, no interrupts
+        di
+ng_stay:
+        jr ng_stay
+
+; SCREEN 5 on page 0, the display off while the picture goes up
+ng_regs:
+        db 1, 0x00                  ; display off, no interrupts
+        db 0, 0x06                  ; GRAPHIC4 (SCREEN 5)
+        db 2, 0x1F                  ; page 0
+        db 7, 0x00                  ; border
+        db 8, 0x0A                  ; sprites off
+        if PORT_BASE == 0x88
+        db 9, 0x80                  ; 212 lines, 60 Hz (as the demos)
+        endif                       ; (98h: R#9 after the table, NT kept)
+        db 23, 0x00                 ; no vertical scroll
+        db 15, 0x00                 ; status register 0
+        db 16, 0x00                 ; palette from entry 0
+        db 0xFF
+
+; the message on the MSX's own screen: SCREEN 0 (INITXT), then ng_msg
+; (rom_tables.asm) through CHPUT, which keeps every register. The BIOS
+; enables interrupts: nothing of this ROM raises one (the V9968's are off,
+; the MOD's timer is stopped and its flags cleared).
+ng_text:
+        call INITXT
+        ld hl, ng_msg
+ngt_1:  ld a, (hl)
+        or a
+        ret z
+        call CHPUT
+        inc hl
+        jr ngt_1
 
 clear_cmd:
         dw 0, 0, 256, 512           ; DX, DY, NX, NY

@@ -11,8 +11,13 @@
 // Offset 6 (8Eh) is left alone on purpose: 8Eh is used by the MegaRAM.
 //
 // Clocks: the slot bus and the V9968 run on clk (85.9 MHz). The engine runs
-// on clk_eng = clk / 2 (42.95 MHz, clk42m on the cartridge, same source and
-// phase), which doubles its timing margin. Crossings use toggles:
+// on clk_eng = clk / 2 (42.95 MHz), which doubles its timing margin. Both
+// must come from the same PLL with aligned rising edges: on the cartridge
+// clk = clk85m (u_pll2 CLKOUT) and clk_eng = clk42g (u_pll2 CLKOUTD, the
+// PLL's own divide-by-2), not HRA!'s clk42m (Gowin_CLKDIV, which Gowin's
+// timing model places 3-4 ns away from the PLL outputs). The SDC declares
+// clk42g as clk14m x 3 with 0.5 ns of uncertainty on the crossings (see
+// geo3d/integration/apply_geo3d_patch.py). Crossings use toggles:
 //   bus -> engine : request toggle, one engine-clock strobe per access
 //   engine -> bus : acknowledge toggle when read data is ready
 //   engine -> VDP : one toggle per command-register write, turned back into

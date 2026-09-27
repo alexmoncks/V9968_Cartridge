@@ -169,6 +169,8 @@ module vdp (
 	wire				w_clear_sprite_collision_xy;
 	wire		[8:0]	w_sprite_collision_x;
 	wire		[9:0]	w_sprite_collision_y;
+	wire				w_clear_sprite_overmap;
+	wire				w_sprite_overmap_enable;
 	wire				w_sprite_overmap;
 	wire		[4:0]	w_sprite_overmap_id;
 
@@ -264,6 +266,8 @@ module vdp (
 		.clear_sprite_collision_xy					( w_clear_sprite_collision_xy				),
 		.sprite_collision_x							( w_sprite_collision_x						),
 		.sprite_collision_y							( w_sprite_collision_y						),
+		.clear_sprite_overmap						( w_clear_sprite_overmap					),
+		.sprite_overmap_enable					( w_sprite_overmap_enable				),
 		.sprite_overmap								( w_sprite_overmap							),
 		.sprite_overmap_id							( w_sprite_overmap_id						),
 		.clear_border_detect						( w_clear_border_detect						),
@@ -367,6 +371,8 @@ module vdp (
 		.clear_sprite_collision_xy					( w_clear_sprite_collision_xy				),
 		.sprite_collision_x							( w_sprite_collision_x						),
 		.sprite_collision_y							( w_sprite_collision_y						),
+		.clear_sprite_overmap						( w_clear_sprite_overmap					),
+		.sprite_overmap_enable					( w_sprite_overmap_enable				),
 		.sprite_overmap								( w_sprite_overmap							),
 		.sprite_overmap_id							( w_sprite_overmap_id						),
 		.reg_50hz_mode								( reg_50hz_mode								),
