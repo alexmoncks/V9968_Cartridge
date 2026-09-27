@@ -57,15 +57,16 @@
 module vdp_command (
 	input				reset_n,
 	input				clk,
-	//	VRAM interface
-	output		[17:0]	command_vram_address,
-	output				command_vram_valid,
-	input				command_vram_ready,
-	output				command_vram_write,
-	output		[31:0]	command_vram_wdata,
-	output		[3:0]	command_vram_wdata_mask,
-	input		[31:0]	command_vram_rdata,
-	input				command_vram_rdata_en,
+	//	Shared cache interface
+	output		[17:0]	cache_vram_address,
+	output				cache_vram_valid,
+	input				cache_vram_ready,
+	output				cache_vram_write,
+	output		[7:0]	cache_vram_wdata,
+	input		[7:0]	cache_vram_rdata,
+	input				cache_vram_rdata_en,
+	output				cache_flush_start,
+	input				cache_flush_end,
 	//	CPU interface
 	input				register_write,
 	input		[5:0]	register_num,
@@ -205,12 +206,12 @@ module vdp_command (
 
 	reg			[17:0]	ff_cache_vram_address;
 	reg					ff_cache_vram_valid;
-	wire				w_cache_vram_ready;
 	reg					ff_cache_vram_write;
 	reg			[7:0]	ff_cache_vram_wdata;
+	reg					ff_cache_flush_start;
+	wire				w_cache_vram_ready;
 	wire		[7:0]	w_cache_vram_rdata;
 	wire				w_cache_vram_rdata_en;
-	reg					ff_cache_flush_start;
 	wire				w_cache_flush_end;
 	wire				w_effective_mode;
 	wire		[1:0]	w_bpp;					//	c_bpp_Xbit
@@ -1893,28 +1894,15 @@ module vdp_command (
 	// --------------------------------------------------------------------
 	//	VRAM Access Cache
 	// --------------------------------------------------------------------
-	vdp_command_cache u_cache (
-		.reset_n						( reset_n						),
-		.clk							( clk							),
-		.start							( ff_start						),
-		.cache_vram_address				( ff_cache_vram_address			),
-		.cache_vram_valid				( ff_cache_vram_valid			),
-		.cache_vram_ready				( w_cache_vram_ready			),
-		.cache_vram_write				( ff_cache_vram_write			),
-		.cache_vram_wdata				( ff_cache_vram_wdata			),
-		.cache_vram_rdata				( w_cache_vram_rdata			),
-		.cache_vram_rdata_en			( w_cache_vram_rdata_en			),
-		.cache_flush_start				( ff_cache_flush_start			),
-		.cache_flush_end				( w_cache_flush_end				),
-		.command_vram_address			( command_vram_address			),
-		.command_vram_valid				( command_vram_valid			),
-		.command_vram_ready				( command_vram_ready			),
-		.command_vram_write				( command_vram_write			),
-		.command_vram_wdata				( command_vram_wdata			),
-		.command_vram_wdata_mask		( command_vram_wdata_mask		),
-		.command_vram_rdata				( command_vram_rdata			),
-		.command_vram_rdata_en			( command_vram_rdata_en			)
-	);
+	assign cache_vram_address	= ff_cache_vram_address;
+	assign cache_vram_valid	= ff_cache_vram_valid;
+	assign cache_vram_write	= ff_cache_vram_write;
+	assign cache_vram_wdata	= ff_cache_vram_wdata;
+	assign cache_flush_start	= ff_cache_flush_start;
+	assign w_cache_vram_ready	= cache_vram_ready;
+	assign w_cache_vram_rdata	= cache_vram_rdata;
+	assign w_cache_vram_rdata_en = cache_vram_rdata_en;
+	assign w_cache_flush_end	= cache_flush_end;
 
 	// --------------------------------------------------------------------
 	//	Status registers
