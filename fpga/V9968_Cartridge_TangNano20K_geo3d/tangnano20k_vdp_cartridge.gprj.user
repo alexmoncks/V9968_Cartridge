@@ -1,0 +1,27 @@
+<?xml version="1" encoding="UTF-8"?>
+<!DOCTYPE ProjectUserData>
+<UserConfig>
+    <Version>1.0</Version>
+    <FlowState>
+        <Process ID="Synthesis" State="2"/>
+        <Process ID="Pnr" State="2"/>
+        <Process ID="Gao" State="2"/>
+        <Process ID="Rtl_Gao" State="2"/>
+        <Process ID="Gvio" State="0"/>
+        <Process ID="Place" State="2"/>
+    </FlowState>
+    <ResultFileList>
+        <ResultFile ResultFileType="RES.netlist" ResultFilePath="impl/gwsynthesis/tangnano20k_vdp_cartridge.vg"/>
+        <ResultFile ResultFileType="RES.pnr.bitstream" ResultFilePath="impl/pnr/tangnano20k_vdp_cartridge.fs"/>
+        <ResultFile ResultFileType="RES.pnr.pin.rpt" ResultFilePath="impl/pnr/tangnano20k_vdp_cartridge.pin.html"/>
+        <ResultFile ResultFileType="RES.pnr.posp.bin" ResultFilePath="impl/pnr/tangnano20k_vdp_cartridge.db"/>
+        <ResultFile ResultFileType="RES.pnr.pwr.rpt" ResultFilePath="impl/pnr/tangnano20k_vdp_cartridge.power.html"/>
+        <ResultFile ResultFileType="RES.pnr.report" ResultFilePath="impl/pnr/tangnano20k_vdp_cartridge.rpt.html"/>
+        <ResultFile ResultFileType="RES.pnr.timing.paths" ResultFilePath="impl/pnr/tangnano20k_vdp_cartridge.timing_paths"/>
+        <ResultFile ResultFileType="RES.pnr.timing.rpt" ResultFilePath="impl/pnr/tangnano20k_vdp_cartridge.tr.html"/>
+        <ResultFile ResultFileType="RES.syn.report" ResultFilePath="impl/gwsynthesis/tangnano20k_vdp_cartridge_syn.rpt.html"/>
+        <ResultFile ResultFileType="RES.syn.resource" ResultFilePath="impl/gwsynthesis/tangnano20k_vdp_cartridge_syn_rsc.xml"/>
+    </ResultFileList>
+    <Ui></Ui>
+    <FpUi></FpUi>
+</UserConfig>

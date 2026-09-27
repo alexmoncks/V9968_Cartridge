@@ -2,20 +2,20 @@
 
 # geo3d no cartucho V9968 padrão: relatório de verificação
 
-Data: 27/09/2026. Base: projeto do cartucho do HRA! (Tang Nano 20K, FPGA Gowin GW2AR-18C), versão 86361d8, com o geo3d integrado pelo script `geo3d/integration/apply_geo3d_patch.py`. Ramo `geo3d-phase2`. Nada desta etapa foi commitado ainda (seção 12).
+Data: 27/09/2026. Base: projeto do cartucho do HRA! (Tang Nano 20K, FPGA Gowin GW2AR-18C), versão 86361d8, com o geo3d integrado pelo script `geo3d/integration/apply_geo3d_patch.py`. Ramo `geo3d-phase2`. Tudo desta etapa está no GitHub (alexmoncks/V9968_Cartridge): ramo `geo3d-phase2` em `eb9be4f` e `main` em `a72a761`. A organização das pastas da seção 4 (o projeto do HRA! intocado em `fpga/V9968_Cartridge_TangNano20K/` e o projeto com o geo3d ao lado, em `fpga/V9968_Cartridge_TangNano20K_geo3d/`) veio depois desses commits.
 
 ## 1. Resumo
 
 | Pergunta | Resposta |
 |---|---|
 | Precisa mudar a placa física? | **Não.** Nenhum componente, trilha, pino, cristal ou jumper. |
-| Muda o projeto original do HRA!? | **Sim, só no FPGA, em 5 arquivos.** Tudo por script; o original é recuperável. |
+| Muda o projeto original do HRA!? | **Não, a pasta dele fica exatamente como no upstream.** O geo3d fica num segundo projeto do Gowin ao lado, gerado por script a partir do dele, onde 5 arquivos dele recebem o patch (só FPGA). |
 | Cabe no FPGA do cartucho? | **Sim.** Gowin oficial: 62% da lógica, 86% dos slices, 48% da memória, 38% dos DSPs, 6 de 8 clocks primários. |
 | O geo3d tem clock próprio? | **Sim.** O clk42g (42,95 MHz) sai do mesmo PLL do clk85m. O clk42m do HRA! e o HDMI ficaram como estavam. |
 | A lógica funciona? | **Sim, em simulação.** A placa inteira do HRA! foi simulada com o geo3d e o clock novo. A VRAM saiu idêntica à referência em todos os casos. |
 | O tempo (timing) fecha? | **Sim, no modelo do Gowin.** Zero caminhos com folga negativa em setup, hold, recovery e removal, em todos os pares de clocks, com as configurações do próprio projeto do HRA!. Algumas folgas são justas (seção 6). |
 | A ROM de demos detecta o geo3d? | **Sim.** Sem ele, mostra "geo3d não encontrado" em três idiomas e fica parada ali, em vez da tela preta. |
-| Já pode gravar no cartucho? | **Sim.** O bitstream `geo3d_cartridge_86361d8.fs` e as instruções `FLASH.txt` (inglês, português e japonês) estão prontos. Grave com o cartucho fora do MSX. |
+| Já pode gravar no cartucho? | **Sim.** O bitstream `geo3d_cartridge_86361d8.fs` (cópia de `fpga/V9968_Cartridge_TangNano20K_geo3d/impl/pnr/tangnano20k_vdp_cartridge.fs`) e as instruções `FLASH.txt` (inglês, português e japonês) estão prontos. Grave com o cartucho fora do MSX. |
 | Testado no cartucho real? | **Não.** Nada aqui substitui o teste no hardware (seções 10 e 11). |
 
 ## 2. O que foi verificado e como
@@ -23,10 +23,10 @@ Data: 27/09/2026. Base: projeto do cartucho do HRA! (Tang Nano 20K, FPGA Gowin G
 | Item | Método | Resultado |
 |---|---|---|
 | Placa e slot | Esquemas e netlist em `pcb/`, RTL `msx_slot.v`, simulação de ciclos de E/S do Z80 | Funciona sem modificação |
-| Script de integração | 86361d8 limpo mais o script, comparado com a árvore `fpga/` do repositório; segunda execução; 24 testes de mutação e de atualização | Árvore idêntica (fora o fim de linha CRLF do Windows); a segunda execução não muda nada; 24 de 24 testes passam |
-| Ocupação e tempo | Gowin EDA Standard V1.9.12.03 (licença do Alex), build completo com as restrições do HRA! e as do geo3d, com as configurações do projeto (Place Option 0). Tabelas de caminhos de setup e hold para cada par de clocks | Cabe; zero violações |
+| Script de integração | Gerador rodado sobre o 86361d8 limpo do HRA!, comparado com o projeto do geo3d no repositório; segunda execução; `--check`; os 47 testes de `geo3d/integration/test_apply_geo3d_patch.sh` (texto do HRA! mudado, inclusive uma nova fonte de leitura no mux do barramento e sinais renomeados ou com outra largura; pasta do HRA! já modificada; edições à mão recusadas e preservadas, `--force` com cópia de segurança; atualizações do projeto do HRA! e de `geo3d/rtl`; arquivos sobrando e faltando; configurações mudadas; um clone só do repositório do HRA!) | Árvore idêntica (fora o fim de linha CRLF do Windows); a segunda execução não grava nada; os arquivos modificados são idênticos byte a byte aos do patch anterior, aplicado na própria pasta; 47 de 47 testes passam |
+| Ocupação e tempo | Gowin EDA Standard V1.9.12.03 (licença do Alex), build completo do projeto do geo3d na própria pasta, como o Run All da IDE, com as configurações do projeto (Place Option 0). Tabelas de caminhos de setup e hold para cada par de clocks, tiradas de uma cópia que gera o mesmo bitstream | Cabe; zero violações |
 | Ferramentas abertas | Yosys + nextpnr-himbaechel (oss-cad-suite) | O original roteia; com o geo3d não posiciona (98,6%). Não servem de referência para este chip |
-| Lógica integrada | iverilog: top completo do HRA!, VDP, slot, controlador de SDRAM e modelo Micron, mais o geo3d, com o clk42g. Também com o clk42g atrasado 0,5 ns e 2,0 ns | Passou em tudo |
+| Lógica integrada | iverilog: top completo do HRA!, VDP, slot, controlador de SDRAM e modelo Micron, mais o geo3d, com o clk42g, tudo tirado do `src/` do projeto do geo3d. Também com o clk42g atrasado 0,5 ns e 2,0 ns. A bancada de teste fica fora do repositório (no ambiente de trabalho do autor) | Passou em tudo |
 | Equivalência do VDP | Prova formal (Yosys) e simulação lado a lado | VDP modificado idêntico ao original com o geo3d parado |
 | ROM de demos | Simulador Z80 `geo3d/rom/run_rom_z80.py`, com e sem geo3d, 88h e 98h | 256 de 256 execuções passam |
 | Software sem geo3d | openMSX sem geo3d: 88h e 98h, MSX1, MSX2 PAL, MSX2+, sem cartucho | ROM BASIC e jogo corretos; ROM de demos mostra "geo3d não encontrado" |
@@ -51,33 +51,50 @@ Data: 27/09/2026. Base: projeto do cartucho do HRA! (Tang Nano 20K, FPGA Gowin G
 
 ## 4. O que muda no projeto do HRA!
 
-Tudo é aplicado pelo `apply_geo3d_patch.py`. Ele é idempotente e falha se o texto do HRA! mudar. A cada execução, mesmo numa árvore já modificada (por exemplo depois de um merge do HRA!), ele confere a configuração do rPLL2, a ligação do `u_pll2` (entrada clk14m, saída clk85m) e os clocks e as margens do SDC. Se qualquer conferência falhar, ele não grava nada. Aplicado sobre o 86361d8 limpo, ele reproduz exatamente a árvore `fpga/` do repositório (conferido de novo nesta data).
+A pasta do HRA!, `fpga/V9968_Cartridge_TangNano20K/`, não muda: é exatamente o upstream 86361d8 dele, com o build dele em `impl/` (o bitstream de recuperação), então os merges das atualizações dele nunca dão conflito. O geo3d fica num segundo projeto do Gowin ao lado, `fpga/V9968_Cartridge_TangNano20K_geo3d/`, organizado como o dele e com os mesmos nomes de arquivo:
 
-| Arquivo do HRA! | Mudança (linhas, contra o 86361d8) | Efeito |
+| Caminho em `fpga/V9968_Cartridge_TangNano20K_geo3d/` | Conteúdo |
+|---|---|
+| `tangnano20k_vdp_cartridge.gprj` | A lista de arquivos dele mais `src/geo3d/geo3d_core.v`, `geo3d_engine.v` e `geo3d_bus.v` (caminhos dentro do projeto, então a IDE do Gowin abre o projeto como está) |
+| `src/` | Os arquivos que o `.gprj` dele lista, mais os arquivos do gerador de IP (`.ipc`, `.mod`, `_tmp.v`, `.vo`) dos IPs dele. Quatro deles recebem o patch abaixo |
+| `src/geo3d/` | Cópias de `geo3d/rtl`, que continua sendo o único lugar para editá-los |
+| `impl/tangnano20k_vdp_cartridge_process_config.json` | As configurações do projeto dele, sem mudança (Place Option 0) |
+| `impl/gwsynthesis/`, `impl/pnr/` | O nosso build do Gowin, no git do mesmo jeito que o dele. O bitstream é `impl/pnr/tangnano20k_vdp_cartridge.fs` |
+| `geo3d_manifest.txt`, `README.md` | Gravados pelo script: os arquivos que ele gerou, com o SHA-256 do texto de cada um (para distinguir o que ele gerou de edições à mão), e uma descrição curta da pasta |
+
+O `apply_geo3d_patch.py` gera essa pasta a partir da pasta do HRA! e de `geo3d/rtl`, e só lê a pasta dele. Ele é idempotente (uma segunda execução não grava nada) e não grava nada se o texto do HRA! mudar ou se a pasta dele já tiver mudanças do geo3d. A cada execução, ele confere a configuração do rPLL2, a ligação do `u_pll2` (entrada clk14m, saída clk85m), os clocks do SDC, o mux de leitura do barramento (tem de ser exatamente o do upstream, para que uma nova fonte de leitura nunca seja descartada), a declaração e a largura de cada sinal dele em que o geo3d se liga, e as portas do slot e do VDP ligadas a esses sinais. Ele não sobrescreve edições à mão no projeto do geo3d (feitas na IDE do Gowin, por exemplo, que mostra as cópias em `src/geo3d`): recusa e diz onde a edição deve ir, e o `--force` guarda uma cópia dos arquivos ao lado da pasta antes de sobrescrevê-los. O `--check` não grava nada e confirma que a pasta é exatamente o que o script gera, em especial que `src/geo3d` é igual a `geo3d/rtl`. Os arquivos modificados são idênticos byte a byte aos do patch anterior, aplicado na própria pasta (conferido nesta data). O script precisa de Python 3 (Linux, macOS, WSL ou Windows); o `geo3d/integration/test_apply_geo3d_patch.sh` testa o script em cópias temporárias.
+
+| Arquivo do HRA! (modificado no projeto do geo3d) | Mudança (linhas, contra o 86361d8) | Efeito |
 |---|---|---|
 | `src/v9968/vdp.v` | +11 / -3: uma porta externa de escrita nos registradores de comando (`ext_cmd_wr/num/data`) somada à da CPU, e a saída do CE | Com o geo3d parado, o VDP é **idêntico** ao original: prova formal (695 de 695 pontos; 697 de 697 no 86361d8) e simulação lado a lado de 3,6 milhões de ciclos com todos os pinos iguais |
 | `src/tangnano20k_vdp_cartridge.v` (top) | +44 / -4: instancia o `geo3d_bus` nas portas +5 e +7, tira essas portas do VDP, junta os dados de leitura, cria o fio `clk42g`, liga `u_pll2 .clkoutd` a ele e leva o `clk_eng` do geo3d ao clk42g | O VDP continua respondendo em +0 a +4, e o +6 continua indo ao VDP |
-| `tangnano20k_vdp_cartridge.gprj` | +3: os arquivos do geo3d | Nenhum |
+| `tangnano20k_vdp_cartridge.gprj` | +3: os arquivos do geo3d (`src/geo3d/`) | Nenhum |
 | `src/gowin_rpll2/gowin_rpll2.v` | +3 / -3: expõe a saída `clkoutd`. Ela já estava configurada no PLL (CLKOUT / 2, `DYN_SDIV_SEL = 2`) e ficava sem uso | Nenhum para o HRA!: CLKOUT e CLKOUTP não mudam |
 | `src/tangnano20k_vdp_cartridge.sdc` | +7: `create_generated_clock` do clk42g (clk14m x 3, como o clk85m é clk14m x 6) e `set_clock_uncertainty 0.5` nas duas direções entre clk85m e clk42g, com comentários | Só a análise de tempo |
 
-**Não mudam:** `msx_slot.v`, o arquivo de pinos (`.cst`), o HDMI, a SDRAM, o clk42m do HRA! (continua saindo do divisor CLKDIV e alimentando o HDMI e o resto do projeto dele), os clocks e grupos de clocks do SDC do HRA!, e a pasta `impl/`, que guarda o bitstream original do HRA! para recuperação.
+**Não mudam no projeto do geo3d:** `msx_slot.v`, o arquivo de pinos (`.cst`), o HDMI, a SDRAM, o clk42m do HRA! (continua saindo do divisor CLKDIV e alimentando o HDMI e o resto do projeto dele), os clocks e grupos de clocks do SDC do HRA!, e as configurações do projeto. A pasta do próprio HRA! não muda em nada; o `impl/pnr/` dela guarda o bitstream original dele para recuperação.
 
-**Cuidado:** os arquivos `.ipc` e `.mod` do IP do rPLL2 não foram mudados. Se alguém regenerar esse IP no Gowin, a porta `clkoutd` some e a síntese falha com erro. Nesse caso, rode o script de novo.
+**Cuidado:** os arquivos `.ipc` e `.mod` do IP do rPLL2 são copiados sem mudança. Se alguém regenerar esse IP no Gowin, no projeto do geo3d, a porta `clkoutd` some e a síntese falha com erro. Nesse caso, rode o script de novo.
 
-**Arquivos do geo3d mudados nesta etapa:**
+**IDE do Gowin:** na primeira vez que a IDE abre o projeto do geo3d, ela cria `impl/temp/rtl_parser.result` e `impl/temp/rtl_parser_arg.json` e regrava o `tangnano20k_vdp_cartridge.gprj.user`, como na pasta do HRA! (que guarda esses arquivos no git). O `gw_sh`, usado pelo `build_gowin.sh`, não os cria, então eles ainda não estão no repositório.
+
+**Arquivos mudados nesta etapa:**
 
 | Arquivo | Mudança |
 |---|---|
-| `geo3d/integration/apply_geo3d_patch.py` | Os dois passos novos (rPLL2 e SDC), o clk42g no top e as conferências descritas acima |
-| `geo3d/syn/gowin/build_gowin.sh` (novo, ainda fora do git) | Build no Gowin numa cópia fora do repositório, com as configurações do projeto. Acrescenta as tabelas de caminhos só no SDC da cópia e termina com código 2 se houver qualquer folga negativa |
+| `fpga/V9968_Cartridge_TangNano20K/` | De volta ao upstream 86361d8 do HRA!, arquivo por arquivo |
+| `fpga/V9968_Cartridge_TangNano20K_geo3d/` (novo) | O projeto do geo3d gerado pelo script, com o build do Gowin em `impl/` |
+| `geo3d/integration/apply_geo3d_patch.py` | Gera o projeto do geo3d a partir da pasta do HRA!, em vez de modificar a pasta dele, com `--check`; os dois passos novos (rPLL2 e SDC), o clk42g no top, as conferências descritas acima e a proteção das edições à mão (`geo3d_manifest.txt`, `--force`) |
+| `geo3d/integration/test_apply_geo3d_patch.sh` (novo) | Os 47 testes do script, em cópias temporárias (bash e Python 3: Linux ou WSL) |
+| `geo3d/syn/gowin/build_gowin.sh` (novo) | Faz o build do projeto do geo3d na própria pasta, como o Run All da IDE, com as configurações do projeto. Roda no Git Bash; antes, roda o `apply_geo3d_patch.py --check` (com o python3 do WSL se o Windows não tiver Python) e para se o projeto não estiver em dia. As tabelas de caminhos saem de um segundo build numa cópia fora do repositório, cujo SDC recebe os comandos de relatório, para todos os pares dos clocks que o SDC do projeto define; essa cópia tem de gerar o mesmo bitstream. Termina com código 2 se houver qualquer folga negativa |
+| `geo3d/syn/cartridge/synth_cartridge.sh` | A síntese no Yosys gera o projeto do geo3d na pasta de trabalho dela, a partir do projeto do HRA! (basta um clone do repositório dele, como no `run_all.sh`) e do `geo3d/rtl` do próprio script |
 | `geo3d/rtl/geo3d_bus.v` | Só o comentário do cabeçalho (clk42g e a margem do SDC). Nenhuma lógica mudou |
 | `geo3d/rom/geo3d_rom.asm`, `build_rom.py`, `run_rom_z80.py` | Detecção do geo3d na ROM de demos e novos modos do simulador (seção 8) |
 | `geo3d/docs/BASIC_API.md` | Regra R#32-R#58 (seção 9) |
 
 ## 5. Ocupação do FPGA (Gowin, GW2AR-LV18QN88C8/I7)
 
-Builds sobre a base 86361d8, Gowin V1.9.12.03, configurações do projeto do HRA!. Resumos em `openmsx-geo3d\fpga\reports\` (pasta de entrega, fora do repositório).
+Builds sobre a base 86361d8, Gowin V1.9.12.03, configurações do projeto do HRA!. Os relatórios do Gowin do build final estão em `fpga/V9968_Cartridge_TangNano20K_geo3d/impl/`; os resumos e as tabelas de caminhos, em `openmsx-geo3d\fpga\reports\` (pasta de entrega, fora do repositório).
 
 | Recurso | Original HRA! | Com geo3d, clk42m (antes) | Com geo3d, clk42g (final) | Diferença final |
 |---|---|---|---|---|
@@ -96,7 +113,7 @@ Builds sobre a base 86361d8, Gowin V1.9.12.03, configurações do projeto do HRA
 
 ## 6. Tempo (timing)
 
-**Resultado: zero caminhos com folga negativa em todas as tabelas, com as configurações do próprio projeto do HRA! (Place Option 0).** Isso cobre setup, hold, recovery e removal em todos os pares de clocks. Um build feito como o Gowin IDE faz (`open_project` e `run all`, sem opções nem tabelas extras) gera o mesmo bitstream do `build_gowin.sh`; só a linha "Created Time" muda.
+**Resultado: zero caminhos com folga negativa em todas as tabelas, com as configurações do próprio projeto do HRA! (Place Option 0).** Isso cobre setup, hold, recovery e removal em todos os pares de clocks. O `build_gowin.sh` faz o build do projeto do geo3d na própria pasta exatamente como o Gowin IDE faz (`open_project` e `run all`, sem opções nem tabelas extras). As tabelas de caminhos saem de um segundo build numa cópia cujo SDC recebe os comandos de relatório; o script confere que ela gera o mesmo bitstream (só a linha "Created Time" muda). O bitstream também é o mesmo que foi entregue antes da mudança na organização das pastas.
 
 Folga pior em ns (positivo = passa). Nas duas colunas com geo3d, o clk42m ou o clk42g é o clock do motor do geo3d.
 
@@ -124,7 +141,7 @@ Folga pior em ns (positivo = passa). Nas duas colunas com geo3d, o clk42m ou o c
 
 - As tabelas listam no máximo 50 caminhos. Por isso "50 ou mais".
 - Na coluna do clk42m, as linhas "85 para 42m" também cobrem o motor do geo3d, e os piores caminhos são dele, não do HDMI: o setup vai do reset `ff_reset3_n2` do HRA! ao motor, e o hold 42m para 85 vai dos registradores `cmd_*_e` do `geo3d_bus` aos `cmd_*`.
-- As 52 tabelas são setup e hold para os 25 pares entre clk85m, clk42m, clk42g, clk215m e clk, mais recovery e removal. No build final, 38 delas não têm caminhos: todas as de pares com clk215m ou clk (32), as entre clk42m e clk42g (4, porque o HDMI e o geo3d não se ligam) e as de clk42m para clk85m (2).
+- As 74 tabelas são setup e hold para os 36 pares dos seis clocks que o SDC do projeto define (clk85m, clk42m, clk42g, clk215m, clk e clk14m; o `build_gowin.sh` os lê do SDC), mais recovery e removal. No build final, 60 delas não têm caminhos: todas as de pares com clk215m, clk ou clk14m (54), as entre clk42m e clk42g (4, porque o HDMI e o geo3d não se ligam) e as de clk42m para clk85m (2).
 - As folgas entre clk85m e clk42g já descontam a margem de 0,5 ns. Sem ela, os holds dessa passagem ficariam em cerca de +0,54 ns.
 - **Cuidado ao ler o relatório do Gowin:** o resumo "Total Negative Slack" mostra 0 mesmo com caminhos falhando entre clocks. Só as tabelas de caminhos mostram as violações. O `build_gowin.sh` gera essas tabelas e confere todas.
 
@@ -152,7 +169,7 @@ Folga pior em ns (positivo = passa). Nas duas colunas com geo3d, o clk42m ou o c
 
 ## 7. Simulação da RTL integrada
 
-Simulado em iverilog o top completo do HRA! (86361d8 limpo mais o script final, o mesmo Verilog do repositório) com o VDP, o slot, o controlador de SDRAM e o modelo Micron MT48LC2M32B2, mais o geo3d, a 85,909 MHz. Os stubs cobrem só os PLLs, o divisor (que divide de verdade por 2) e o HDMI. O stub do PLL gera o `clkoutd` como clk85m / 2, em fase. Um verificador (`clkcheck.v`) confirma que o `clk_eng` do geo3d é o clk42g, na metade exata da frequência, com 0 bordas desalinhadas. O lado do Z80 usa ciclos reais de E/S (/IORQ, /RD, /WR, A0-A7, D0-D7) na velocidade do OTIR. A VRAM (256 KB) começa preenchida com um padrão pseudoaleatório, para pegar qualquer escrita perdida.
+Simulado em iverilog o top completo do HRA! (o Verilog do `src/` do projeto do geo3d: 86361d8 limpo mais o script) com o VDP, o slot, o controlador de SDRAM e o modelo Micron MT48LC2M32B2, mais o geo3d, a 85,909 MHz. Os stubs cobrem só os PLLs, o divisor (que divide de verdade por 2) e o HDMI. O stub do PLL gera o `clkoutd` como clk85m / 2, em fase. Um verificador (`clkcheck.v`) confirma que o `clk_eng` do geo3d é o clk42g, na metade exata da frequência, com 0 bordas desalinhadas. O lado do Z80 usa ciclos reais de E/S (/IORQ, /RD, /WR, A0-A7, D0-D7) na velocidade do OTIR. A VRAM (256 KB) começa preenchida com um padrão pseudoaleatório, para pegar qualquer escrita perdida.
 
 | Teste | Resultado |
 |---|---|
@@ -167,7 +184,9 @@ Simulado em iverilog o top completo do HRA! (86361d8 limpo mais o script final, 
 | Conflito proposital: a CPU escreve R#32-R#58 com o geo3d ocupado (33 escritas) | 4 colisões no mesmo ciclo e quadro corrompido, como esperado. Confirma a regra da seção 9 |
 
 - **Comparação com o clock antigo e com a entrega anterior:** os logs de comandos e de leituras, as VRAMs e a contagem de ciclos saíram idênticos byte a byte aos da simulação com o clk42m e aos da entrega anterior com o clk42g. O teste de estado de partida, que antes só tinha rodado com o clk42m, foi refeito na árvore final nesta revisão.
+- **Nova organização das pastas:** os testes de registradores, arame, faces, texturas, handshake, DIP em 98h, registradores em 98h e a demo real rodaram de novo com todos os arquivos tirados de `fpga/V9968_Cartridge_TangNano20K_geo3d/src` (o geo3d de `src/geo3d`). Os 8 passam, com os logs de comandos e de leituras, as VRAMs e a contagem de ciclos idênticos byte a byte aos das execuções anteriores.
 - **Clock atrasado:** 7 testes com o clk42g atrasado 0,5 ns e 2,0 ns em relação ao clk85m (14 execuções). Numa simulação sem atrasos de porta, isso faz toda captura de clk85m para clk42g pegar o valor lançado na mesma borda. As 14 passaram. A VRAM saiu idêntica à dos clocks alinhados, menos no teste de conflito proposital, em que as colisões mudam (1 em vez de 4) e, com elas, o quadro corrompido.
+- **Bancada de teste:** o `tb_cart.sv`, os stubs, o gerador de ciclos do Z80 e a reprodução da demo ficam fora do repositório (no ambiente de trabalho do autor), então essas execuções não podem ser repetidas só com o repositório.
 - **Limite:** a simulação não modela os atrasos reais de roteamento. Eles ficam por conta da análise de tempo (seção 6) e do cartucho real.
 
 ## 8. Nosso software com o bitstream original do HRA! (sem geo3d)
@@ -249,11 +268,13 @@ Arquivos na pasta de entrega `openmsx-geo3d` (fora do repositório):
 
 | Arquivo | Conferência |
 |---|---|
-| `fpga\geo3d_cartridge_86361d8.fs` | SHA-256 `49a3fc51e3118c597bbb31783b8ebec8a421c7457236cb4ce3b2762e7681172f` |
-| `fpga\recovery\tangnano20k_vdp_cartridge_HRA_86361d8.fs` | SHA-256 `9957d2b507897370c402973c2a358adad9675c0bb7b45b38f75d1fb6a6b32b73`, igual ao `impl/pnr/tangnano20k_vdp_cartridge.fs` do repositório |
+| `fpga\geo3d_cartridge_86361d8.fs` | SHA-256 `00238660f28d4fa73232fcfd3553b3c1eb554bb1a81b35e52ebfbab3b1e8c3ca`, igual ao `fpga/V9968_Cartridge_TangNano20K_geo3d/impl/pnr/tangnano20k_vdp_cartridge.fs` do repositório. Mesmo conteúdo da entrega anterior (`49a3fc51...`): só a linha "Created Time" muda |
+| `fpga\recovery\tangnano20k_vdp_cartridge_HRA_86361d8.fs` | SHA-256 `9957d2b507897370c402973c2a358adad9675c0bb7b45b38f75d1fb6a6b32b73`, igual ao `fpga/V9968_Cartridge_TangNano20K/impl/pnr/tangnano20k_vdp_cartridge.fs` do repositório (pasta do HRA!) |
 | `fpga\FLASH.txt` | Instruções em inglês, português e japonês |
 | `GEO3D_88_hardware_real_MOD.ROM` | SHA-1 `79fbbd4f29f2f3ebffa1e9da414b7917d0ca575f` |
 | `GEO3D_98.ROM` | SHA-1 `0b8ff70cd6f6ad3dbbcb194ec269987536f42987` |
+
+Os valores de SHA-256 dos dois bitstreams são os dos arquivos com fim de linha CRLF, como o Gowin grava e como o git os coloca num checkout no Windows. Num checkout em Linux ou macOS o fim de linha é LF e os hashes mudam (geo3d `4ce281b2...`, HRA! `7fc1fffa...`), com o mesmo bitstream.
 
 As duas ROMs usam a música Star Wars (MOD) e não vão para o git. As outras ROMs da pasta são builds antigos, sem a detecção.
 
@@ -268,14 +289,13 @@ As duas ROMs usam a música Star Wars (MOD) e não vão para o git. As outras RO
    - "geo3d não encontrado" logo na partida: o cartucho responde, mas sem o geo3d. Confira se este bitstream foi gravado e se a chave DIP está em 88h.
    - A mesma mensagem no meio de uma demo: o geo3d ou o motor de comandos parou de responder por cerca de 3 s. Anote a demo e o momento: é um problema real para investigar.
 6. **Observar:** pontos ou lixo durante o desenho (SDRAM), travamentos depois de alguns minutos e aquecimento. Se possível, testar em outro modelo de MSX, inclusive um PAL e um turbo R.
-7. **Para voltar ao original:** o mesmo procedimento, com o cartucho fora do MSX, usando `recovery\tangnano20k_vdp_cartridge_HRA_86361d8.fs`.
+7. **Para voltar ao original:** o mesmo procedimento, com o cartucho fora do MSX, usando `recovery\tangnano20k_vdp_cartridge_HRA_86361d8.fs` (ou o `fpga/V9968_Cartridge_TangNano20K/impl/pnr/tangnano20k_vdp_cartridge.fs` do HRA!, com o mesmo conteúdo).
 
 ## 12. Pendências
 
 1. **Primeiro teste no cartucho real** (seção 11). É o único jeito de confirmar a margem de 0,5 ns e as folgas justas.
-2. **Revisar e commitar** as mudanças desta etapa. Nada foi commitado nem enviado. O `geo3d/syn/gowin/` e este relatório ainda estão fora do git.
-3. **`geo3d/README.md`** (somente leitura de propósito, precisa da aprovação do Alex): as linhas 123 e 142 ainda dizem clk42m, e a lista de integração não cita o `gowin_rpll2.v` nem o SDC.
-4. **`geo3d/demos/README.md`, `README.pt.md` e `README.es.md`:** o parágrafo "Hardware real" e o uso do `run_rom_z80.py` (opções novas `--absent`, `--stuck`, `--msxver` e `--pal`) ainda descrevem o estado anterior.
-5. **ROMs antigas na pasta de entrega:** `GEO3D_88_hardware_real.ROM`, as `*_crawlonly`, `GEO3D_98_fmconv` e `GEO3D_98_midi` não têm a detecção. Refazer ou apagar.
-6. **Nomes dos menus do Gowin Programmer** no `FLASH.txt`: vêm do procedimento da Sipeed para o Tang Nano 20K e não foram conferidos nesta máquina.
-7. **Espaço em disco:** as pastas de experimentos `C:\Projects\mmsoft\g3x` (561 MB) e `geo3d_review_gw*` estão fora do repositório e podem ser apagadas.
+2. **`geo3d/README.md`** (somente leitura de propósito, precisa da aprovação do Alex): os parágrafos de integração e de tempo ainda descrevem a organização antiga (o patch aplicado na pasta do HRA!, o build do Gowin numa cópia).
+3. **`geo3d/demos/README.md`, `README.pt.md` e `README.es.md`:** o parágrafo "Hardware real" e o uso do `run_rom_z80.py` (opções novas `--absent`, `--stuck`, `--msxver` e `--pal`) ainda descrevem o estado anterior.
+4. **ROMs antigas na pasta de entrega:** `GEO3D_88_hardware_real.ROM`, as `*_crawlonly`, `GEO3D_98_fmconv` e `GEO3D_98_midi` não têm a detecção. Refazer ou apagar.
+5. **Nomes dos menus do Gowin Programmer** no `FLASH.txt`: vêm do procedimento da Sipeed para o Tang Nano 20K e não foram conferidos nesta máquina.
+6. **Espaço em disco:** as pastas de experimentos `C:\Projects\mmsoft\g3x` (561 MB) e `geo3d_review_gw*` estão fora do repositório e podem ser apagadas.

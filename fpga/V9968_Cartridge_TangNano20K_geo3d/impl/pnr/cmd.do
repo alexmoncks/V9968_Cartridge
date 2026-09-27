@@ -1,0 +1,17 @@
+-d C:\Projects\mmsoft\V9968_Cartridge\fpga\V9968_Cartridge_TangNano20K_geo3d\impl\gwsynthesis\tangnano20k_vdp_cartridge.vg
+-p GW2AR-18C-QFN88-8
+-pn GW2AR-LV18QN88C8/I7
+-cst C:\Projects\mmsoft\V9968_Cartridge\fpga\V9968_Cartridge_TangNano20K_geo3d\src\tangnano20k_vdp_cartridge.cst
+-cfg C:\Projects\mmsoft\V9968_Cartridge\fpga\V9968_Cartridge_TangNano20K_geo3d\impl\pnr\device.cfg
+-sdc C:\Projects\mmsoft\V9968_Cartridge\fpga\V9968_Cartridge_TangNano20K_geo3d\src\tangnano20k_vdp_cartridge.sdc
+-bit
+-tr
+-ph
+-timing
+-cst_error
+-place_option 0
+-route_option 1
+-clock_route_order 0
+-correct_hold 1
+-route_maxfan 100
+-global_freq 14.320
