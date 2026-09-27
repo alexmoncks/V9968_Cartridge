@@ -58,9 +58,43 @@ too little sample RAM it must play the FM fallback (checked as --chip opl
 --cycles N runs the demo sequence N times (each crawl plays its music from
 its start; with a looping MOD: its passes over them).
 
+geo3d is answered as the RTL does (geo3d_engine.v): the ROM's power-on
+probe (geo_probe) reads S#1 (ID 2: a V9968 in V9958 mode, as after reset),
+the status at P+5 and PORT#4 at P+4 with R#15 = 2, then writes index 40h and
+reads P+7 17 times (40h-4Fh at their reset values, then 40h again). Without
+geo3d or with it stuck, the ROM must show "geo3d not found" and stay there:
+  --absent ff      a V9968 at the base, P+5..P+7 read FFh (HRA!'s bitstream)
+  --absent mirror  a V9958 whose ports repeat at P+4..P+7 (P+5 reads S#n):
+                   P+4 must never be read (a VRAM read there)
+  --absent v9938   a V9938 at the base (ID 0): P+4..P+7 never touched
+  --absent none    nothing at the base (every port there reads FFh)
+  --stuck geo      geo3d found, but from the crawl's 10th page flip on (the
+                   MOD plays by then) its RUN never ends
+  --stuck ce       the same for the command engine's CE (a STOP does not
+                   free it)
+  --stuck cegeo    the command engine hangs with geo3d waiting for it: CE
+                   and RUN stay up until the ROM's STOP (R#46 = 0); then CE
+                   drops and geo3d, freed, stays busy GEO_TAIL more status
+                   reads (the rest of its frame) before RUN ends
+  --msxver N       the BIOS's MSXVER (default 2; 0: an MSX1, where the 98h
+                   profile must not probe at all)
+  --pal            the BIOS's RG9SAV (FFE8h) with NT = 1 (a 50 Hz machine):
+                   the 98h profile's picture keeps it (R#9 = 82h)
+Checked then: the CPU ends in the message's loop (ng_stay); no geo3d port
+written (--absent); after the timeout (--stuck, which also reports the time
+the wait took) only reads of geo3d's status (P+5), all before the picture:
+until RUN reads 0 or 32768 of them; then a second STOP, before the picture,
+only when RUN ended; when a V99x8 answers at the base, VRAM page 0, the
+palette and the registers show exactly the message picture (streams.json
+"nogeo"); the BIOS text (INITXT, then CHPUT) exactly NOGEO_BIOS on the 88h
+profile, and on the 98h profile only without a V99x8 there; with a MoonSound
+(--stuck), no key on after the timeout, and the MOD's timers stopped (or,
+when the FM conversion played, all 18 FM channels keyed off).
+
 Usage: run_rom_z80.py [--base 0x88|0x98] [--lang en|es|pt] [--keys digit|down|up]
                       [--chip psg|scc|opl] [--opl4] [--moonsound KB] [--timed] [--cycles N]
-                      [--late N] [--out DIR] [--trace FILE] [space_at_flip]
+                      [--late N] [--out DIR] [--trace FILE] [--absent ff|mirror|v9938|none]
+                      [--stuck geo|ce|cegeo] [--msxver N] [--pal] [space_at_flip]
   --base: port profile, 0x88 (default, GEO3D.ROM) or 0x98 (GEO3D_98.ROM, the
   emulator profile); build it first with build_rom.py --base.
   --timed: real time as with --moonsound, without one (for timing reports).
@@ -107,8 +141,16 @@ ap.add_argument("--out", default=os.path.join(HERE, "out"), help="the build's ou
 ap.add_argument("--trace", help="write every IN and OUT to this file ('I'/'O', port, value)")
 ap.add_argument("--cycles", type=int, default=1,
                 help="the demo sequence this many times (with a looping MOD: its passes over them)")
+ap.add_argument("--absent", choices=("ff", "mirror", "v9938", "none"),
+                help="no geo3d at the base (see the module doc): the ROM must show its message")
+ap.add_argument("--stuck", choices=("geo", "ce", "cegeo"),
+                help="from the crawl on, geo3d's RUN (geo) or the command engine's CE (ce) never ends, "
+                     "or CE hangs with geo3d waiting for it until the ROM's STOP (cegeo)")
+ap.add_argument("--msxver", type=int, default=2, choices=(0, 1, 2, 3), help="the BIOS's MSXVER (002Dh)")
+ap.add_argument("--pal", action="store_true", help="the BIOS's RG9SAV with NT = 1 (50 Hz)")
 ap.add_argument("space_at", nargs="?", type=int)
 opt = ap.parse_args()
+NOGEO = opt.absent is not None or opt.stuck is not None     # the run must end in the message
 OUT = opt.out
 BASE, SPACE_AT = opt.base, opt.space_at
 MS = opt.moonsound is not None
@@ -153,6 +195,10 @@ m = z80.Z80Machine()
 m.set_memory_block(0x4000, rom[0:BANK])                # page 1: bank 0
 m.set_memory_block(0x0024, b"\xC9")                     # ENASLT
 m.set_memory_block(0x0138, b"\xC9")                     # RSLREG
+m.set_memory_block(0x006C, b"\xC9")                     # INITXT (the message through the BIOS)
+m.set_memory_block(0x00A2, b"\xC9")                     # CHPUT
+m.set_memory_block(0x002D, bytes([opt.msxver]))         # MSXVER
+m.set_memory_block(0xFFE8, bytes([0x02 if opt.pal else 0x00]))     # RG9SAV: NT (50 / 60 Hz)
 m.set_memory_block(0xFCC1, bytes([0x00, 0x00, 0x00, 0x00, 0x00]))
 m.sp = 0xF37D
 m.pc = 0x4010                                           # INIT from the header
@@ -161,12 +207,20 @@ assert rom[0:2] == b"AB" and rom[2] | rom[3] << 8 == 0x4010
 st = {"r15": 0, "pend": None, "s0": 0, "geo": 0, "flips": 0, "inits": 0,
       "page2": None, "idx": None, "row": 0, "tick": 0, "blanks": 0, "fdemo": 0, "psg_reg": 0,
       "forced": False, "opl_reg": [0, 0], "in_scc": False, "scc_mem": bytearray(256),
-      "scc_9000": 0xFF, "page2_save": None, "vb": 0, "vb_flip": 0}
+      "scc_9000": 0xFF, "page2_save": None, "vb": 0, "vb_flip": 0,
+      "rptr": None, "geo_stuck": False, "stuck_t": None, "timeout": None, "initxt": 0, "bios": [],
+      "ce_stuck": False, "geo_tail": 0, "stops": [], "pic_io": None, "run_end_io": None}
+GEO_TAIL = 1000       # --stuck cegeo: status reads geo3d stays busy after the STOP frees it
+gio = []              # accesses to P+4..P+7: (I/O accesses so far, "I"/"O", offset, value)
+# geo3d's register window (geo3d_engine.v) after reset: 40h-47h, 48h status,
+# 49h version (FFh: the first one), 4Ah-4Fh counters
+GEO_REGS = {0x40 + i: 0 for i in range(16)}
+GEO_REGS[0x49] = 0xFF
 SCC_SLOT = 0x02                             # where the emulated SCC sits (primary slot 2)
 TARGET = {"psg": 0, "scc": 1, "opl": 2}[opt.chip]
 events = []           # ("G", sel, b) / ("RUN",) / ("P", port, b, blanks) / ("INIT",) /
                       # ("S", psg register, value, vertical blanks since the demo began)
-trace = []            # --trace: b"O" / b"I", port, value
+trace = bytearray()    # --trace: "O" / "I", port, value (3 bytes each)
 flip_t = []           # --timed: (demo, flip, T-state, real vertical blanks since the last flip,
                       # blanks the player counted)
 
@@ -194,18 +248,33 @@ def keys_down():
     return down
 
 
+STUCK_FLIPS = 10
+
+
+def stuck_now():
+    """--stuck: from the crawl's STUCK_FLIPS-th page flip on (the MOD plays by then)"""
+    return opt.stuck is not None and st["inits"] >= 2 and st["flips"] >= STUCK_FLIPS
+
+
 def on_out(port, v):
     p = port & 0xFF
     if opt.trace:
-        trace.append(bytes((0x4F, p, v)))
+        trace.extend((0x4F, p, v))
+    st["io"] = st.get("io", 0) + 1
+    if 4 <= (p - BASE) & 0xFF <= 7:
+        gio.append((st["io"], "O", (p - BASE) & 0xFF, v))
     if p == P_GIDX:
         events.append(("G", 0, v))
         st["idx"] = v
+        st["rptr"] = v
     elif p == P_GDAT:
         events.append(("G", 1, v))
         if st["idx"] == 0x48 and v & 1:
             events.append(("RUN",))
             st["geo"] = 2
+            if opt.stuck in ("geo", "cegeo") and stuck_now() and not st["geo_stuck"] and not st["timeout"]:
+                st["geo_stuck"], st["stuck_t"] = True, now()     # this RUN never ends (geo)
+                st["ce_stuck"] = opt.stuck == "cegeo"            # or not before a STOP (cegeo)
         if st["idx"] is not None and st["idx"] >> 4 == 4:
             st["idx"] = 0x40 | ((st["idx"] + 1) & 0xF)
     elif p in (P_DATA, P_CTRL, P_PAL, P_IND):
@@ -227,7 +296,16 @@ def on_out(port, v):
                         st["flips"] += 1
                         st["blanks"] = 0          # blanks are counted from flip to flip
                         events.append(("FLIP", st["fdemo"]))
+                    if r == 46 and st["timeout"]:     # hw_timeout's STOPs
+                        st["stops"].append((st["io"], st["pend"]))
+                        if st["ce_stuck"] and st["pend"] == 0:
+                            # --stuck cegeo: the STOP frees the command engine, and
+                            # geo3d, which waited for it, finishes its frame
+                            st["ce_stuck"] = st["geo_stuck"] = False
+                            st["geo_tail"], st["geo"] = GEO_TAIL, 0
                 st["pend"] = None
+        elif p in (P_DATA, P_PAL) and st["timeout"] and st["pic_io"] is None:
+            st["pic_io"] = st["io"]               # the message picture starts
     elif p == 0xA0:                           # PSG register select
         st["psg_reg"] = v & 0x0F
     elif p == 0xA1:                           # PSG data
@@ -261,16 +339,57 @@ def on_out(port, v):
 def on_in(port):
     v = read_port(port & 0xFF)
     if opt.trace:
-        trace.append(bytes((0x49, port & 0xFF, v)))
+        trace.extend((0x49, port & 0xFF, v))
+    off = (port - BASE) & 0xFF
+    st["io"] = st.get("io", 0) + 1
+    if 4 <= off <= 7:
+        gio.append((st["io"], "I", off, v))
+        if off == 5 and st["timeout"] and not v & 1 and st["run_end_io"] is None:
+            st["run_end_io"] = st["io"]           # hw_timeout saw geo3d's RUN end
+    elif off < 4:
+        st["vdp_reads"] = st.get("vdp_reads", 0) + 1
     return v
 
 
 def read_port(p):
+    off = (p - BASE) & 0xFF
+    if off < 8 and opt.absent == "none":
+        return 0xFF                           # nothing at the base
+    if 4 <= off <= 7 and opt.absent == "mirror":
+        off -= 4                              # the VDP's ports again: P+5 reads the status
+        p = BASE + off
+    elif 4 <= off <= 7 and opt.absent in ("ff", "v9938"):
+        return 0xFF                           # HRA!'s bitstream drives FFh; a V9938: nothing there
     if p == P_GIDX:
+        if st["geo_stuck"]:
+            return 0x01                       # --stuck geo: RUN busy for ever (cegeo: until the STOP)
+        if st["geo_tail"]:
+            st["geo_tail"] -= 1               # --stuck cegeo: the rest of the frame after the STOP
+            return 0x01
         if st["geo"]:
             st["geo"] -= 1
             return 0x01
         return 0x00
+    if p == P_GDAT:                           # geo3d's registers, read pointer auto-increment (4xh)
+        r = st["rptr"]
+        if r is None:
+            return 0xFF
+        if r >> 4 == 4:
+            st["rptr"] = 0x40 | ((r + 1) & 0x0F)
+        return GEO_REGS.get(r, 0xFF)
+    if p == P_PORT4:
+        return 0x00                           # PORT#4 after reset
+    if p == P_CTRL and st["r15"] == 1:
+        return 0x00 if opt.absent == "v9938" else 0x04     # S#1: ID 0 (V9938), else 2 (V9958 mode)
+    if p == P_CTRL and st["r15"] == 2:
+        if opt.absent == "mirror":
+            return 0x8C                       # S#2 of a V9958: TR, bits 3-2 always 1
+        if opt.stuck == "ce" and stuck_now():
+            if st["stuck_t"] is None:
+                st["stuck_t"] = now()
+            return 0x01                       # --stuck ce: CE up for ever
+        if st["ce_stuck"]:
+            return 0x01                       # --stuck cegeo: CE up until the ROM's STOP
     if p == P_CTRL:
         if st["r15"] == 0:                    # S#0: F set on every other read
             if TIMED:                         # or: F set by every vertical blank since the last read
@@ -313,7 +432,8 @@ def read_port(p):
 m.set_output_callback(on_out)
 m.set_input_callback(on_in)
 US_MEM = labels.get("us_mem")                # the MOD upload's memory writes (after its RAM test)
-for addr in (0x0024, 0x0138, labels["bank2_raw"], labels["psg_silence"]) + ((US_MEM,) if MS and US_MEM else ()):
+for addr in ((0x0024, 0x0138, 0x006C, 0x00A2, labels["bank2_raw"], labels["psg_silence"], labels["hw_timeout"])
+             + ((US_MEM,) if MS and US_MEM else ())):
     m.set_breakpoint(addr)
 
 
@@ -381,6 +501,22 @@ while True:
         m.set_memory_block(0x8000, rom[b * BANK:(b + 1) * BANK])
         st["page2"] = b
         step_over()
+    elif m.pc == 0x006C:                      # INITXT
+        st["initxt"] += 1
+        step_over()
+    elif m.pc == 0x00A2:                      # CHPUT
+        st["bios"].append(m.a)
+        step_over()
+    elif m.pc == labels["hw_timeout"]:        # a wait ran out of time
+        st["timeout"] = (len(events), now(), st.get("io", 0))
+        step_over()
+    if NOGEO:
+        if m.pc == labels["ng_stay"]:
+            break
+        if now() > 60 * T_HZ:
+            stuck = True
+            break
+        continue
     if st["inits"] >= target_inits:
         # with a MoonSound, a few frames more: the demo_init that stops the MOD
         st.setdefault("t_last", now())
@@ -389,6 +525,158 @@ while True:
     if st["inits"] == 1 and (st["tick"] > MENU_LIMIT or menu_steps > MENU_STEPS):
         stuck = True
         break
+
+
+def vdp_model(evs):
+    """The VDP at the base after the writes in evs: (registers, palette
+    entries as written, VRAM, the registers written)"""
+    regs, pal, vram, written = [0] * 64, [None] * 16, bytearray(0x40000), set()
+    s = {"pend": None, "addr": 0, "ptr": 0, "pinc": True, "pidx": 0, "pfirst": None}
+
+    def reg(r, v):
+        regs[r] = v
+        written.add(r)
+        if r == 16:
+            s["pidx"], s["pfirst"] = v & 15, None
+        elif r == 17:
+            s["ptr"], s["pinc"] = v & 0x3F, not (v & 0x80)
+    for e in evs:
+        if e[0] != "P":
+            continue
+        p, v = e[1], e[2]
+        if p == P_CTRL:
+            if s["pend"] is None:
+                s["pend"] = v
+            else:
+                if v & 0x80:
+                    reg(v & 0x3F, s["pend"])
+                else:
+                    s["addr"] = ((regs[14] & 0x0F) << 14) | ((v & 0x3F) << 8) | s["pend"]
+                s["pend"] = None
+        elif p == P_IND:
+            reg(s["ptr"], v)
+            if s["pinc"]:
+                s["ptr"] = (s["ptr"] + 1) & 0x3F
+        elif p == P_PAL:
+            if s["pfirst"] is None:
+                s["pfirst"] = v
+            else:
+                pal[s["pidx"]] = (s["pfirst"], v)
+                s["pidx"], s["pfirst"] = (s["pidx"] + 1) & 15, None
+        elif p == P_DATA:
+            vram[s["addr"]] = v
+            s["addr"] = (s["addr"] + 1) & 0x3FFFF
+    return regs, pal, vram, written
+
+
+def nogeo_check():
+    """--absent / --stuck: the message, and nothing more at geo3d's ports -> ok"""
+    ng = exp["nogeo"]
+    ok = not stuck and m.pc == labels["ng_stay"]
+    what = (f"--absent {opt.absent}" if opt.absent else f"--stuck {opt.stuck}") + f", MSXVER {opt.msxver}"
+    print(f"sem geo3d ({what}): a CPU "
+          + ("parou no laço da mensagem (ng_stay)" if ok else f"NÃO chegou ao ng_stay (PC {m.pc:04x})"))
+    vdp_here = opt.absent != "none" and not (BASE == 0x98 and opt.msxver == 0)
+    t0 = 0
+    if opt.stuck:
+        good = st["timeout"] is not None and st["stuck_t"] is not None
+        dt = (st["timeout"][1] - st["stuck_t"]) / T_HZ if good else 0
+        good = good and 1.0 <= dt <= 8.0
+        t0 = st["timeout"][0] if st["timeout"] else len(events)
+        print(f"espera  : {'RUN do geo3d' if opt.stuck == 'geo' else 'CE do V9968'} preso a partir da troca "
+              f"{STUCK_FLIPS} do crawl; hw_timeout depois de {dt:.2f} s: {'ok' if good else 'FALHOU'}")
+        ok = ok and good
+        # after the timeout: STOP, reads of geo3d's status only (until RUN = 0, at
+        # most 32768), a second STOP only when RUN ended, all before the picture
+        after = [g for g in gio if st["timeout"] and g[0] > st["timeout"][2]]
+        other = [g for g in after if (g[1], g[2]) != ("I", 5)]
+        reads = [g for g in after if (g[1], g[2]) == ("I", 5)]
+        busy = sum(1 for g in reads if g[3] & 1)
+        ended = bool(reads) and not reads[-1][3] & 1
+        pic, stops = st["pic_io"], st["stops"]
+        good = (not other and pic is not None and all(g[0] < pic for g in reads)
+                and (busy == len(reads) - 1 if ended else len(reads) == 32768)
+                and [v for _, v in stops] == [0] * (2 if ended else 1)
+                and bool(reads) and stops[0][0] < reads[0][0]
+                and (not ended or reads[-1][0] < stops[1][0] < pic))
+        if opt.stuck == "cegeo":              # the freed geo3d's frame was waited for
+            good = good and ended and busy == GEO_TAIL
+        elif opt.stuck == "geo":              # a RUN that never ends: given up
+            good = good and not ended
+        print(f"portas  : depois do tempo esgotado: STOP, {len(reads)} leituras do status do geo3d "
+              f"(P+5; RUN ocupado em {busy}, {'terminou' if ended else 'não terminou'}), "
+              f"{len(stops)} STOP(s) (R#46 = 0), outros acessos a P+4..P+7: {len(other)}, "
+              f"tudo antes da imagem: {'ok' if good else 'FALHOU'}")
+        ok = ok and good
+    else:
+        want = [("I", 5)] if opt.absent in ("ff", "mirror") and not (BASE == 0x98 and opt.msxver == 0) else []
+        got = [(k, o) for _, k, o, _ in gio]
+        good = got == want
+        print(f"portas  : acessos a P+4..P+7: {[f'{k} P+{o}' for k, o in got]} "
+              f"(esperado {[f'{k} P+{o}' for k, o in want]}): {'ok' if good else 'FALHOU'}")
+        ok = ok and good
+        if BASE == 0x98 and opt.msxver == 0:
+            quiet = not any(e[0] == "P" for e in events) and not st.get("vdp_reads")
+            print(f"MSX1    : nenhum acesso a 98h-9Fh: {'ok' if quiet else 'FALHOU'}")
+            ok = ok and quiet
+    regs, pal, vram, written = vdp_model(events[t0:])
+    if vdp_here:
+        page = bytes.fromhex(ng["page"])
+        want_pal = [(ng["pal"][2 * i], ng["pal"][2 * i + 1]) for i in range(16)]
+        good_img = bytes(vram[:len(page)]) == page
+        good_pal = pal == want_pal
+        r9 = 0x82 if BASE == 0x98 and opt.pal else 0x80        # 98h: the machine's NT kept
+        want_regs = {0: 0x06, 1: 0x40, 2: 0x1F, 7: 0x00, 8: 0x0A, 9: r9, 15: 0x00, 23: 0x00}
+        good_regs = all(regs[r] == v for r, v in want_regs.items())
+        allowed = {0, 1, 2, 7, 8, 9, 14, 15, 16, 23} | ({46} if opt.stuck else set())
+        good_set = written <= allowed and (opt.stuck or not any(g[1] == "O" for g in gio))
+        print(f"imagem  : página 0 {'idêntica' if good_img else 'DIFERENTE'} à mensagem ({len(page)} bytes), "
+              f"paleta {'idêntica' if good_pal else 'DIFERENTE'}, registradores "
+              f"{'ok' if good_regs else 'DIFERENTES'} (R#1 = {regs[1]:02X}: tela ligada; R#9 = "
+              f"{regs[9]:02X}), registradores "
+              f"escritos {sorted(written)}: {'ok' if good_set else 'FALHOU'}")
+        ok = ok and good_img and good_pal and good_regs and good_set
+    else:
+        vdp_w = [e for e in events[t0:] if e[0] == "P" and e[1] != P_CTRL]
+        print(f"imagem  : nenhum VDP na base: escritas de dados, paleta ou VRAM lá: {len(vdp_w)}: "
+              + ("ok" if not vdp_w else "FALHOU"))
+        ok = ok and not vdp_w
+    bios_want = BASE == 0x88 or not vdp_here
+    text = bytes(st["bios"]).decode("latin-1")
+    if bios_want:
+        good = st["initxt"] == 1 and text == ng["bios"]
+        print(f"BIOS    : INITXT {st['initxt']}x, CHPUT {len(text)} caracteres "
+              f"{'idênticos' if text == ng['bios'] else 'DIFERENTES'} ao texto: {'ok' if good else 'FALHOU'}")
+        if text != ng["bios"]:
+            print(f"   ROM {text!r}\n   esperado {ng['bios']!r}")
+    else:
+        good = st["initxt"] == 0 and not text
+        print(f"BIOS    : não usada (a mensagem está no VDP da base): {'ok' if good else 'FALHOU'}")
+    ok = ok and good
+    if MS and opt.stuck:
+        t_to = st["timeout"][1] if st["timeout"] else float("inf")
+        kon = [(t, r, v) for t, r, v in ms.wave if t >= t_to and 0x68 <= r < 0x80 and v & 0x80]
+        if st.get("found", (0,))[0] == 3:     # the MOD played: mod_stop
+            stop = [v for t, b, r, v in ms.fmw if t >= t_to and b == 0 and r == 4]     # FM 04h: timer control
+            good = 0x60 in stop and 0x80 in stop and not kon
+            print(f"MOD     : depois do tempo esgotado: registrador 04h do FM {[f'{v:02X}' for v in stop]} "
+                  f"(60h timers parados, 80h flags zeradas), key ons da parte wave: {len(kon)}: "
+                  f"{'ok' if good else 'FALHOU'}")
+        else:                                 # the FM conversion played: music_stop's key offs
+            off = {(b, r) for t, b, r, v in ms.fmw if t >= t_to and 0xB0 <= r <= 0xB8 and not v & 0x20}
+            fm_on = [x for x in ms.fmw if x[0] >= t_to and 0xB0 <= x[2] <= 0xB8 and x[3] & 0x20]
+            good = len(off) == 18 and not fm_on and not kon
+            print(f"FM      : depois do tempo esgotado: key off em {len(off)} de 18 canais, key ons: "
+                  f"{len(fm_on) + len(kon)}: {'ok' if good else 'FALHOU'}")
+        ok = ok and good
+    if opt.trace:
+        open(opt.trace, "wb").write(trace)
+    print(f"portas {BASE:02X}h, {what}: " + ("PASS" if ok else "FAIL"))
+    return ok
+
+
+if NOGEO:
+    sys.exit(0 if nogeo_check() else 1)
 # the player's current table entry when the run stopped (the restart, or the
 # demo after SPACE)
 cur_demo = m.memory[labels["cur_demo"]] | m.memory[labels["cur_demo"] + 1] << 8
@@ -833,6 +1121,6 @@ if SPACE_AT is None and not stuck:
           f"({'ok' if len(played) == ndemos * CYCLES + 1 else 'FALHOU'})")
     ok = ok and len(played) == ndemos * CYCLES + 1
 if opt.trace:
-    open(opt.trace, "wb").write(b"".join(trace))
+    open(opt.trace, "wb").write(trace)
 print(f"portas {BASE:02X}h, {opt.lang}, teclas {opt.keys}: " + ("PASS" if ok else "FAIL"))
 sys.exit(0 if ok else 1)
