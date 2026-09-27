@@ -664,7 +664,10 @@ Chão xadrez, quatro cubos com uma textura feita com LINE, CIRCLE e PAINT, câme
 - **Programa que termina sem G3END:** a paleta padrão mantém a cor 4 azulada, então a tela de texto continua legível, e o gancho inerte não faz nada fora do modo gráfico.
 
 ### 7.2 Motor de comandos do VDP
-- **Regra do geo3d:** não escrever R#32-R#46 com RUN ocupado. Todo comando G3 só volta com RUN desocupado, e o RUN só desocupa depois que o VDP termina o último comando. Com isso, o LINE, COPY, PAINT, PRINT #1 e PUT SPRITE do BASIC nunca encontram o geo3d no meio de um comando.
+- **Regra do geo3d:** não escrever R#32-R#58 com RUN ocupado. Todo comando G3 só volta com RUN desocupado, e o RUN só desocupa depois que o VDP termina o último comando. Com isso, o LINE, COPY, PAINT, PRINT #1 e PUT SPRITE do BASIC nunca encontram o geo3d no meio de um comando.
+  - A faixa vai até R#58, e não só até R#46: o geo3d escreve R#47-R#50 para o LRMM, e o LRMM lê R#47-R#58 (vetores e janela) enquanto roda. Uma escrita da CPU no mesmo ciclo de uma escrita do geo3d também se perde, porque o geo3d tem prioridade na porta de comandos (simulação da RTL integrada, 27/09/2026).
+  - **CE = 0 não quer dizer motor livre:** o CE cai entre um comando do geo3d e o seguinte. Quem quer usar o motor de comandos tem de esperar o bit 0 (RUN) do status do geo3d, não só o CE.
+  - A janela do LRMM (R#51-R#58) precisa cobrir toda a VRAM, que é o valor do reset e o que o G3INIT programa.
 - Na direção contrária também não há risco: o geo3d espera CE = 0 sozinho, então um COPY do BASIC ainda em andamento quando G3FRAME começa não faz mal.
 - **CTRL+STOP ou erro no meio de um quadro:** a ROM termina a passada em andamento, deixa o geo3d parado e R#15 = 0, e só então devolve o erro ou a parada ao BASIC.
 - **Esperas:** todas têm prazo (cerca de 2 s, contado em voltas de laço e não em JIFFY) e terminam em Device I/O error. Elas também verificam CTRL+STOP.
