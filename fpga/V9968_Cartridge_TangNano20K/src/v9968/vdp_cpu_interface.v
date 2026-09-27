@@ -564,7 +564,12 @@ module vdp_cpu_interface (
 				end
 			6'd2:	//	R#2 = [A17][A16][A15][A14][A13][A12][A11][A10]
 				begin
-					ff_pattern_name_table_base <= ff_1st_byte;
+					if( ff_v9958_mode ) begin
+						ff_pattern_name_table_base <= { 1'b0, ff_1st_byte[6:0] };
+					end
+					else begin
+						ff_pattern_name_table_base <= ff_1st_byte;
+					end
 				end
 			6'd3:	//	R#3 = [A13][A12][A11][A10][A9][A8][A7][A6]
 				begin
@@ -572,6 +577,12 @@ module vdp_cpu_interface (
 				end
 			6'd4:	//	R#4 = [N/A][A17][A16][A15][A14][A13][A12][A11]
 				begin
+					if( ff_v9958_mode ) begin
+						ff_pattern_generator_table_base <= { 1'b0, ff_1st_byte[5:0] };
+					end
+					else begin
+						ff_pattern_generator_table_base <= ff_1st_byte[6:0];
+					end
 					ff_pattern_generator_table_base <= ff_1st_byte[6:0];
 				end
 			6'd5:	//	R#5 = [A14][A13][A12][A11][A10][A9][A8][A7]
@@ -580,7 +591,12 @@ module vdp_cpu_interface (
 				end
 			6'd6:	//	R#6 = [N/A][A17][A16][A15][A14][A13][A12][A11]
 				begin
-					ff_sprite_pattern_generator_table_base <= ff_1st_byte[6:0];
+					if( ff_v9958_mode ) begin
+						ff_sprite_pattern_generator_table_base <= { 1'b0, ff_1st_byte[5:0] };
+					end
+					else begin
+						ff_sprite_pattern_generator_table_base <= ff_1st_byte[6:0];
+					end
 				end
 			6'd7:	//	R#7 = [BD7][BD6][BD5][BD4][BD3][BD2][BD1][BD0]
 				begin
@@ -601,11 +617,21 @@ module vdp_cpu_interface (
 				end
 			6'd10:	//	R#10 = [N/A][N/A][N/A][N/A][A17][A16][A15][A14]
 				begin
-					ff_color_table_base[17:14] <= ff_1st_byte[3:0];
+					if( ff_v9958_mode ) begin
+						ff_color_table_base[17:14] <= { 1'b0, ff_1st_byte[2:0] };
+					end
+					else begin
+						ff_color_table_base[17:14] <= ff_1st_byte[3:0];
+					end
 				end
 			6'd11:	//	R#11 = [N/A][N/A][N/A][N/A][N/A][A17][A16][A15]
 				begin
-					ff_sprite_attribute_table_base[17:15] <= ff_1st_byte[2:0];
+					if( ff_v9958_mode ) begin
+						ff_sprite_attribute_table_base[17:15] <= { 1'b0, ff_1st_byte[1:0] };
+					end
+					else begin
+						ff_sprite_attribute_table_base[17:15] <= ff_1st_byte[2:0];
+					end
 				end
 			6'd12:	//	R#12 = [T23][T22][T1][T20][BC3][BC2][BC1][BC0]
 				begin
@@ -652,6 +678,14 @@ module vdp_cpu_interface (
 				begin
 					if( !ff_lock_extregs ) begin
 						ff_v9958_mode <= ff_1st_byte[0];
+						if( ff_1st_byte[0] == 1'b1 ) begin
+							//	Change to V9958 compatible mode
+							ff_pattern_name_table_base[17] <= 1'b0;
+							ff_pattern_generator_table_base[17] <= 1'b0;
+							ff_sprite_pattern_generator_table_base[17] <= 1'b0;
+							ff_color_table_base[17] <= 1'b0;
+							ff_sprite_attribute_table_base[17] <= 1'b0;
+						end
 					end
 				end
 			8'd23:	//	R#23 = [DO7][DO6][DO5][DO4][DO3][DO2][DO1][DO0]
