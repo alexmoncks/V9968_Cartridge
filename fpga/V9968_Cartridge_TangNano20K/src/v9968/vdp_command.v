@@ -237,6 +237,7 @@ module vdp_command (
 	reg					ff_dy_active;
 	wire				w_sx_overflow;
 	wire				w_dx_overflow;
+	wire				w_sy_overflow;
 	wire				w_dy_overflow;
 	reg			[2:0]	ff_bit_count;
 	reg			[7:0]	ff_fore_color;
@@ -708,6 +709,7 @@ module vdp_command (
 	assign w_next_dy		= ff_diy ? ( { 2'd0, ff_dy } - 13'd1  ): ( { 2'd0, ff_dy } + 13'd1  );
 	assign w_sx_overflow	= ff_sx_active && (w_next_sx[9] || (!ff_512pixel && w_next_sx[8]));
 	assign w_dx_overflow	= ff_dx_active && (w_next_dx[9] || (!ff_512pixel && w_next_dx[8]));
+	assign w_sy_overflow	= ff_sy_active && ff_diy && (ff_sy[20:8] == 13'd0);
 	assign w_dy_overflow	= w_next_dy[12];
 
 	// --------------------------------------------------------------------
@@ -1410,7 +1412,7 @@ module vdp_command (
 				ff_cache_vram_write		<= 1'b1;
 				ff_cache_vram_wdata		<= w_destination;
 				ff_count_valid			<= 1'b1;
-				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_dy_overflow) ) begin
+				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_sy_overflow || w_dy_overflow) ) begin
 					ff_state				<= c_state_pre_finish;
 				end
 				else if( reg_command_high_speed_mode ) begin
@@ -1550,7 +1552,7 @@ module vdp_command (
 				ff_cache_vram_write		<= 1'b1;
 				ff_cache_vram_wdata		<= ff_read_byte;
 				ff_count_valid			<= 1'b1;
-				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_dy_overflow) ) begin
+				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_sy_overflow || w_dy_overflow) ) begin
 					ff_state				<= c_state_pre_finish;
 				end
 				else if( reg_command_high_speed_mode ) begin
@@ -1584,7 +1586,7 @@ module vdp_command (
 				ff_cache_vram_write		<= 1'b1;
 				ff_cache_vram_wdata		<= ff_read_byte;
 				ff_count_valid			<= 1'b1;
-				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_dy_overflow) ) begin
+				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_sy_overflow || w_dy_overflow) ) begin
 					ff_state				<= c_state_pre_finish;
 				end
 				else if( reg_command_high_speed_mode ) begin
