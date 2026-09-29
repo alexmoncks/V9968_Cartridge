@@ -362,6 +362,18 @@ module vdp_cpu_interface (
 			ff_register_num		<= ff_register_pointer;
 			ff_1st_byte			<= ff_bus_wdata;
 		end
+		else if( (w_write && ff_port0) || w_read ) begin
+			//	V9938/V9958 abort a half-written port#1 pair on port#0 access or any read
+			ff_2nd_access		<= 1'b0;
+			ff_register_write	<= 1'b0;
+			ff_port3_write		<= 1'b0;
+		end
+		else if( w_write && ff_port2 && !ff_ext_palette_mode && ff_color_palette_phase == 2'd0 ) begin
+			//	The palette 1st byte shares the data latch with port#1 and port#3
+			ff_1st_byte			<= ff_bus_wdata;
+			ff_register_write	<= 1'b0;
+			ff_port3_write		<= 1'b0;
+		end
 		else begin
 			ff_register_write	<= 1'b0;
 			ff_port3_write		<= 1'b0;
@@ -760,14 +772,14 @@ module vdp_cpu_interface (
 			end
 			else begin
 				if( ff_color_palette_phase == 2'd0 ) begin
-					//	P#2 = [0][R][R][R][0][B][B][B]
-					ff_palette_r				<= { ff_bus_wdata[6:4], ff_bus_wdata[6:5] };
-					ff_palette_b				<= { ff_bus_wdata[2:0], ff_bus_wdata[2:1] };
+					//	P#2 = [0][R][R][R][0][B][B][B] (stored in ff_1st_byte)
 					ff_color_palette_phase		<= 2'd1;
 					ff_color_palette_valid		<= 1'b0;
 				end
 				else begin
 					//	P#2 = [0][0][0][0][0][G][G][G]
+					ff_palette_r				<= { ff_1st_byte[6:4], ff_1st_byte[6:5] };
+					ff_palette_b				<= { ff_1st_byte[2:0], ff_1st_byte[2:1] };
 					ff_palette_g				<= { ff_bus_wdata[2:0], ff_bus_wdata[2:1] };
 					ff_color_palette_phase		<= 2'd0;
 					ff_color_palette_valid		<= 1'b1;
