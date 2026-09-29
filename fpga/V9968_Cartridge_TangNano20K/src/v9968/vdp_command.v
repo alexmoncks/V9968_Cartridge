@@ -202,6 +202,7 @@ module vdp_command (
 	reg					ff_fg4;
 	reg			[3:0]	ff_logical_opration;
 	reg			[3:0]	ff_command;
+	reg			[2:0]	ff_pixel_step;
 	reg					ff_start;
 
 	reg			[17:0]	ff_cache_vram_address;
@@ -306,8 +307,7 @@ module vdp_command (
 	assign w_effective_mode		= reg_command_enable || ff_fg4 || (ff_screen_mode[c_g4] || ff_screen_mode[c_g5] || ff_screen_mode[c_g6] || ff_screen_mode[c_g7]);
 	assign w_bpp				= (ff_screen_mode[c_g6] || ff_screen_mode[c_g4]) ? c_bpp_4bit:
 	            				  (ff_screen_mode[c_g5]) ? c_bpp_2bit: c_bpp_8bit;
-	assign w_next				= (ff_screen_mode_clone[c_g7] || ff_command[3:2] != 2'b11) ? 10'd1:
-	             				  (ff_screen_mode_clone[c_g5]) ? 10'd4: 10'd2;
+	assign w_next				= { 7'd0, ff_pixel_step };
 	assign w_512pixel			= (ff_screen_mode_clone[c_g5] || ff_screen_mode_clone[c_g6]);
 
 	assign vram_access_mask		= ff_mxc;
@@ -846,8 +846,8 @@ module vdp_command (
 	end
 
 	assign w_ny			= { 1'b0, ff_ny } + 12'd1;
-	assign w_nx_max		= (ff_screen_mode[c_g7] || ff_command[3:2] != 2'b11) ? reg_nx:
-	             		  (ff_screen_mode[c_g5]) ? { reg_nx[10:2], 2'd0 }: { reg_nx[10:1], 1'd0 };
+	assign w_nx_max		= ff_pixel_step[2] ? { reg_nx[10:2], 2'd0 }:
+	            		  ff_pixel_step[1] ? { reg_nx[10:1], 1'd0 }: reg_nx;
 	assign w_nx_end		= (ff_nx == w_nx_max && ff_command != c_ymmm);
 	assign w_ny_end		= (ff_ny == reg_ny) | w_ny[11] | (w_ny[10] & ~reg_vram256k_mode);
 
@@ -995,6 +995,23 @@ module vdp_command (
 		end
 		else begin
 			ff_start			<= 1'b0;
+		end
+	end
+
+	always @( posedge clk ) begin
+		if( !reset_n ) begin
+			ff_pixel_step	<= 3'd1;
+		end
+		else if( register_write && (register_num == 6'd46) ) begin
+			if( register_data[7:6] != 2'b11 || !(ff_screen_mode_clone[c_g4] || ff_screen_mode_clone[c_g5] || ff_screen_mode_clone[c_g6] || ff_fg4) ) begin
+				ff_pixel_step	<= 3'd1;
+			end
+			else if( ff_screen_mode_clone[c_g5] ) begin
+				ff_pixel_step	<= 3'd4;
+			end
+			else begin
+				ff_pixel_step	<= 3'd2;
+			end
 		end
 	end
 

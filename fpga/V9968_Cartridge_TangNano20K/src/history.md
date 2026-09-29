@@ -1,3 +1,16 @@
+## 2026-09-30 VDPコマンド互換性とタイミング改善
+
+### コマンド互換性
+
+- `ds4.rom`のデモ停止調査で、DIY逆走査時にコピー元SYが先にY=0へ到達しても、LMMM/HMMM/YMMMがコピー先DY側の境界しか終了条件に含めていないことを確認。コピー元・コピー先のうち先に上端へ到達する側で行を打ち切るよう`w_sy_overflow`を追加した。256KB VRAM時は既存の11bit Y座標を使い、Y=0を上端とする。
+- [Issue #10](https://github.com/hra1129/V9968_Cartridge/issues/10)のSCREEN2（R#25 CMD=1）でHMMM/HMMV/YMMM/HMMCが1バイトおきに処理する問題を修正。非ビットマップモードをbyte単位として扱い、`w_next`と`w_nx_max`の刻み幅・終端値を一致させた。FG4のSCREEN5相当動作とSCREEN5/6/7/8の従来刻み幅は維持する。
+
+### タイミング改善
+
+- PnRレポートでclk85mのSetup違反16 endpoint、TNS -4.906 ns、最悪slack -0.459 nsを確認。最悪パスは`ff_fg4`から`w_next`、`w_next_sx`を経て`ff_xsel`のCEに至っていた。
+- R#46書込み時に1/2/4のpixel stepを`ff_pixel_step`へ登録し、実行中の座標更新とNX終端判定で再利用するよう変更。FG4判定を画素処理の組合せ経路から外した。
+- ModelSimで`vdp_command.v`単体コンパイルはエラー0、警告0。ユーザーがGowinビルド後にタイミング違反の解消を確認した。改修後の機能全体回帰は未実施。
+
 ## 2026-09-29 Fleet Commander II 起動停止の調査・ポート#1ラッチ修正
 
 ### 症状
