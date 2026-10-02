@@ -65,7 +65,7 @@ The caps of the letters are textured: each scanline of a face becomes one LRMM
 command that copies texels from a texture kept in VRAM, with the per-pixel step
 computed by geo3d. The texture is stored as 7 pre-shaded copies, and the light
 level picks the copy. About 405 LRMM and 623 LINE spans per frame; the longest
-frame, from RUN to the last pixel, takes 4.1 ms, a quarter of one 60 Hz field
+frame, from RUN to the last pixel, takes 4.4 ms, a quarter of one 60 Hz field
 (16.7 ms), measured in the RTL simulation (`sim/tb_system.v`) with the V9968's
 high-speed commands.
 

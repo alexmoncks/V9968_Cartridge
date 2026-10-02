@@ -57,8 +57,7 @@
 module vdp_command_cache (
 	input				reset_n,
 	input				clk,
-	input				start,						//	1 clock pulse
-	//	VDP command interface
+	input				start,
 	input		[17:0]	cache_vram_address,
 	input				cache_vram_valid,
 	output				cache_vram_ready,
@@ -68,7 +67,13 @@ module vdp_command_cache (
 	output				cache_vram_rdata_en,
 	input				cache_flush_start,
 	output				cache_flush_end,
-	//	VRAM interface
+	input		[17:0]	cpu_vram_address,
+	input				cpu_vram_valid,
+	output				cpu_vram_ready,
+	input				cpu_vram_write,
+	input		[7:0]	cpu_vram_wdata,
+	output		[7:0]	cpu_vram_rdata,
+	output				cpu_vram_rdata_en,
 	output		[17:0]	command_vram_address,
 	output				command_vram_valid,
 	input				command_vram_ready,
@@ -78,663 +83,319 @@ module vdp_command_cache (
 	input		[31:0]	command_vram_rdata,
 	input				command_vram_rdata_en
 );
-	reg		[17:2]	ff_cache0_address;
-	reg		[31:0]	ff_cache0_data;
-	reg				ff_cache0_data_en;
-	reg		[3:0]	ff_cache0_data_mask;
-	reg				ff_cache0_already_read;
-	wire			w_cache0_hit;
-	reg		[17:2]	ff_cache1_address;
-	reg		[31:0]	ff_cache1_data;
-	reg				ff_cache1_data_en;
-	reg		[3:0]	ff_cache1_data_mask;
-	reg				ff_cache1_already_read;
-	wire			w_cache1_hit;
-	reg		[17:2]	ff_cache2_address;
-	reg		[31:0]	ff_cache2_data;
-	reg				ff_cache2_data_en;
-	reg		[3:0]	ff_cache2_data_mask;
-	reg				ff_cache2_already_read;
-	wire			w_cache2_hit;
-	reg		[17:2]	ff_cache3_address;
-	reg		[31:0]	ff_cache3_data;
-	reg				ff_cache3_data_en;
-	reg		[3:0]	ff_cache3_data_mask;
-	reg				ff_cache3_already_read;
-	wire			w_cache3_hit;
-	reg		[1:0]	ff_update_target;
-	reg		[7:0]	ff_cache_vram_rdata;
-	reg				ff_cache_vram_rdata_en;
-	reg				ff_vram_valid;
-	reg		[17:2]	ff_vram_address;
-	reg				ff_vram_write;				//	0: read, 1: write
-	reg		[31:0]	ff_vram_wdata;
-	reg		[3:0]	ff_vram_data_mask;
-	wire			w_vram_ready;
-	reg				ff_prewrite_read;
-	reg				ff_busy;
-	reg				ff_after_read;
-	reg		[2:0]	ff_flush_state;
+	localparam [3:0] c_idle         = 4'd0;
+	localparam [3:0] c_evict_write  = 4'd1;
+	localparam [3:0] c_evict_read   = 4'd2;
+	localparam [3:0] c_read_request = 4'd3;
+	localparam [3:0] c_read_wait    = 4'd4;
+	localparam [3:0] c_flush_scan   = 4'd5;
+	localparam [3:0] c_flush_write  = 4'd6;
+	localparam [3:0] c_lookup       = 4'd7;
+	localparam [3:0] c_process      = 4'd8;
 
-	assign w_cache0_hit		= ff_cache0_data_en && (ff_cache0_address == cache_vram_address[17:2]);
-	assign w_cache1_hit		= ff_cache1_data_en && (ff_cache1_address == cache_vram_address[17:2]);
-	assign w_cache2_hit		= ff_cache2_data_en && (ff_cache2_address == cache_vram_address[17:2]);
-	assign w_cache3_hit		= ff_cache3_data_en && (ff_cache3_address == cache_vram_address[17:2]);
-	assign cache_flush_end	= (ff_flush_state == 3'd1) ? ~ff_vram_valid: 1'b0;
+	reg		[15:0]	ff_address [0:7];
+	reg		[31:0]	ff_data [0:7];
+	reg		[3:0]	ff_mask [0:7];
+	reg		[7:0]	ff_valid;
+	reg		[7:0]	ff_loaded;
+	reg		[2:0]	ff_age [0:7];
+	reg		[3:0]	ff_state;
+	reg		[3:0]	ff_flush_index;
+	reg				ff_flush_pending;
+	reg				ff_flush_command;
+	reg				ff_flush_end;
+	reg		[8:0]	ff_cpu_idle_count;
+	reg				ff_cpu_timer_active;
+	reg		[2:0]	ff_target;
+	reg		[17:0]	ff_pending_address;
+	reg				ff_pending_cpu;
+	reg				ff_pending_write;
+	reg		[7:0]	ff_pending_wdata;
+	reg				ff_lookup_hit;
+	reg				ff_lookup_free;
+	reg		[2:0]	ff_lookup_age;
+	reg		[7:0]	ff_cache_rdata;
+	reg				ff_cache_rdata_en;
+	reg		[7:0]	ff_cpu_rdata;
+	reg				ff_cpu_rdata_en;
+	reg		[15:0]	ff_vram_address;
+	reg				ff_vram_valid;
+	reg				ff_vram_write;
+	reg		[31:0]	ff_vram_wdata;
+	reg		[3:0]	ff_vram_mask;
+
+	wire		[17:0]	w_address;
+	wire		[17:0]	w_input_address;
+	wire		[7:0]	w_hit;
+	wire		[7:0]	w_free;
+	wire		[7:0]	w_oldest;
+	wire				w_hit_found;
+	wire				w_free_found;
+	wire		[2:0]	w_hit_index;
+	wire		[2:0]	w_free_index;
+	wire		[2:0]	w_oldest_index;
+	wire		[2:0]	w_target;
+	wire		[2:0]	w_previous_age;
+	wire				w_available;
+	wire				w_cpu_accept;
+	wire				w_command_accept;
+	genvar				line;
+	integer				index;
+
+	assign w_input_address = cpu_vram_valid ? cpu_vram_address : cache_vram_address;
+	assign w_address = ff_pending_address;
+	generate
+		for( line = 0; line < 8; line = line + 1 ) begin: gen_lookup
+			assign w_hit[line]    = ff_valid[line] && ff_address[line] == w_address[17:2];
+			assign w_free[line]   = !ff_valid[line];
+			assign w_oldest[line] = ff_age[line] == 3'd7;
+		end
+	endgenerate
+	assign w_hit_found  = |w_hit;
+	assign w_free_found = |w_free;
+	assign w_hit_index = w_hit[0] ? 3'd0 : w_hit[1] ? 3'd1 : w_hit[2] ? 3'd2 :
+	                     w_hit[3] ? 3'd3 : w_hit[4] ? 3'd4 : w_hit[5] ? 3'd5 :
+	                     w_hit[6] ? 3'd6 : 3'd7;
+	assign w_free_index = w_free[0] ? 3'd0 : w_free[1] ? 3'd1 : w_free[2] ? 3'd2 :
+	                      w_free[3] ? 3'd3 : w_free[4] ? 3'd4 : w_free[5] ? 3'd5 :
+	                      w_free[6] ? 3'd6 : 3'd7;
+	assign w_oldest_index = w_oldest[0] ? 3'd0 : w_oldest[1] ? 3'd1 :
+	                        w_oldest[2] ? 3'd2 : w_oldest[3] ? 3'd3 :
+	                        w_oldest[4] ? 3'd4 : w_oldest[5] ? 3'd5 :
+	                        w_oldest[6] ? 3'd6 : 3'd7;
+	assign w_target = w_hit_found ? w_hit_index : w_free_found ? w_free_index : w_oldest_index;
+	assign w_previous_age = w_hit_found || !w_free_found ? ff_age[w_target] : 3'd7;
+	assign w_available = ff_state == c_idle && !ff_vram_valid &&
+	                     !ff_cache_rdata_en && !ff_cpu_rdata_en && !ff_flush_pending;
+	assign cpu_vram_ready   = w_available;
+	assign cache_vram_ready = w_available && !cpu_vram_valid && !cache_flush_start;
+	assign w_cpu_accept     = cpu_vram_valid && cpu_vram_ready;
+	assign w_command_accept = cache_vram_valid && cache_vram_ready;
+	assign cache_vram_rdata    = ff_cache_rdata;
+	assign cache_vram_rdata_en = ff_cache_rdata_en;
+	assign cpu_vram_rdata      = ff_cpu_rdata;
+	assign cpu_vram_rdata_en   = ff_cpu_rdata_en;
+	assign cache_flush_end     = ff_flush_end;
+	assign command_vram_address    = { ff_vram_address, 2'b00 };
+	assign command_vram_valid      = ff_vram_valid;
+	assign command_vram_write      = ff_vram_write;
+	assign command_vram_wdata      = ff_vram_wdata;
+	assign command_vram_wdata_mask = ff_vram_mask;
 
 	always @( posedge clk ) begin
-		if( !reset_n ) begin
-			ff_cache0_address		<= 16'd0;
-			ff_cache0_data			<= 32'd0;
-			ff_cache0_data_en		<= 1'b0;
-			ff_cache0_data_mask		<= 4'b1111;
-			ff_cache0_already_read	<= 1'b0;
-			ff_cache1_address		<= 16'd0;
-			ff_cache1_data			<= 32'd0;
-			ff_cache1_data_en		<= 1'b0;
-			ff_cache1_data_mask		<= 4'b1111;
-			ff_cache1_already_read	<= 1'b0;
-			ff_cache2_address		<= 16'd0;
-			ff_cache2_data			<= 32'd0;
-			ff_cache2_data_en		<= 1'b0;
-			ff_cache2_data_mask		<= 4'b1111;
-			ff_cache2_already_read	<= 1'b0;
-			ff_cache3_address		<= 16'd0;
-			ff_cache3_data			<= 32'd0;
-			ff_cache3_data_en		<= 1'b0;
-			ff_cache3_data_mask		<= 4'b1111;
-			ff_cache3_already_read	<= 1'b0;
-			ff_update_target		<= 2'd0;
-			ff_vram_address			<= 16'd0;
-			ff_vram_valid			<= 1'b0;
-			ff_vram_write			<= 1'b0;
-			ff_vram_wdata			<= 32'd0;
-			ff_vram_data_mask		<= 4'b1111;
-			ff_cache_vram_rdata		<= 8'd0;
-			ff_cache_vram_rdata_en	<= 1'b0;
-			ff_busy					<= 1'b1;
-			ff_flush_state			<= 3'd0;
-		end
-		else if( start ) begin
-			//	Clear cache
-			ff_cache0_data_en		<= 1'b0;
-			ff_cache1_data_en		<= 1'b0;
-			ff_cache2_data_en		<= 1'b0;
-			ff_cache3_data_en		<= 1'b0;
-			ff_update_target		<= 2'd0;
-			ff_vram_valid			<= 1'b0;
-			ff_prewrite_read		<= 1'b0;
-			ff_busy					<= 1'b0;
-			ff_after_read			<= 1'b0;
-			ff_flush_state			<= 3'd0;
-		end
-		else if( cache_flush_start ) begin
-			//	キャッシュフラッシュの開始
-			ff_flush_state			<= 3'd5;
-			ff_busy					<= 1'b1;
-		end
-		else if( ff_vram_valid ) begin
-			//	SDRAMコントローラーへアクセス要求を出している場合
-			if( command_vram_ready ) begin
-				//	SDRAMコントローラーからアクセスを受理されたので要求を下ろす
-				ff_vram_valid			<= 1'b0;
-				if( ff_busy && !ff_after_read ) begin
-					ff_busy				<= 1'b0;
-				end
-			end
-			else begin
-				//	hold
+		if( !reset_n || start ) begin
+			ff_valid            <= 8'd0;
+			ff_loaded           <= 8'd0;
+			ff_state            <= c_idle;
+			ff_flush_index      <= 4'd0;
+			ff_flush_pending    <= 1'b0;
+			ff_flush_command    <= 1'b0;
+			ff_flush_end        <= 1'b0;
+			ff_cpu_idle_count   <= 9'd0;
+			ff_cpu_timer_active <= 1'b0;
+			ff_target           <= 3'd0;
+			ff_pending_address  <= 18'd0;
+			ff_pending_cpu      <= 1'b0;
+			ff_pending_write    <= 1'b0;
+			ff_pending_wdata    <= 8'd0;
+			ff_lookup_hit       <= 1'b0;
+			ff_lookup_free      <= 1'b0;
+			ff_lookup_age       <= 3'd0;
+			ff_cache_rdata      <= 8'd0;
+			ff_cache_rdata_en   <= 1'b0;
+			ff_cpu_rdata        <= 8'd0;
+			ff_cpu_rdata_en     <= 1'b0;
+			ff_vram_address     <= 16'd0;
+			ff_vram_valid       <= 1'b0;
+			ff_vram_write       <= 1'b0;
+			ff_vram_wdata       <= 32'd0;
+			ff_vram_mask        <= 4'b1111;
+			for( index = 0; index < 8; index = index + 1 ) begin
+				ff_address[index] <= 16'd0;
+				ff_data[index]    <= 32'd0;
+				ff_mask[index]    <= 4'b1111;
+				ff_age[index]     <= 3'd0;
 			end
 		end
-		else if( ff_after_read && ff_busy && ff_vram_write ) begin
-			//	cache#n 更新前に、cache#n の中の書きかけのデータを書き終えた後にここに来る。
-			ff_after_read <= 1'b0;
-			case( ff_update_target )
-			2'd0: begin
-				//	cache#0 更新用のリード要求
-				ff_vram_valid			<= 1'b1;
-				ff_vram_write			<= 1'b0;
-				ff_vram_address			<= ff_cache0_address;
-				ff_vram_wdata			<= ff_cache0_data;
-				ff_vram_data_mask		<= ff_cache0_data_mask;
+		else begin
+			ff_cache_rdata_en <= 1'b0;
+			ff_cpu_rdata_en   <= 1'b0;
+			ff_flush_end      <= 1'b0;
+			if( cache_flush_start ) begin
+				ff_flush_pending <= 1'b1;
+				ff_flush_command <= 1'b1;
 			end
-			2'd1: begin
-				//	cache#1 更新用のリード要求
-				ff_vram_valid			<= 1'b1;
-				ff_vram_write			<= 1'b0;
-				ff_vram_address			<= ff_cache1_address;
-				ff_vram_wdata			<= ff_cache1_data;
-				ff_vram_data_mask		<= ff_cache1_data_mask;
+			if( w_cpu_accept ) begin
+				ff_cpu_idle_count   <= 9'd256;
+				ff_cpu_timer_active <= 1'b1;
 			end
-			2'd2: begin
-				//	cache#2 更新用のリード要求
-				ff_vram_valid			<= 1'b1;
-				ff_vram_write			<= 1'b0;
-				ff_vram_address			<= ff_cache2_address;
-				ff_vram_wdata			<= ff_cache2_data;
-				ff_vram_data_mask		<= ff_cache2_data_mask;
-			end
-			2'd3: begin
-				//	cache#3 更新用のリード要求
-				ff_vram_valid			<= 1'b1;
-				ff_vram_write			<= 1'b0;
-				ff_vram_address			<= ff_cache3_address;
-				ff_vram_wdata			<= ff_cache3_data;
-				ff_vram_data_mask		<= ff_cache3_data_mask;
-			end
-			endcase
-		end
-		else if( ff_flush_state != 3'd0 ) begin
-			//	キャッシュの内容をフラッシュするステートの場合
-			case( ff_flush_state )
-			3'd5: begin
-				if( ff_cache0_data_en && ff_cache0_data_mask != 4'b1111 ) begin
-					//	もし cache#0 の中に書き込み結果が残っていたら書き出す
-					ff_vram_valid			<= 1'b1;
-					ff_vram_write			<= 1'b1;
-					ff_vram_address			<= ff_cache0_address;
-					ff_vram_wdata			<= ff_cache0_data;
-					ff_vram_data_mask		<= ff_cache0_data_mask;
-				end
-				ff_cache0_data_mask		<= 4'b1111;
-				ff_cache0_data_en		<= 1'b0;
-				ff_flush_state			<= 3'd4;
-			end
-			3'd4: begin
-				if( ff_cache1_data_en && ff_cache1_data_mask != 4'b1111 ) begin
-					//	もし cache#1 の中に書き込み結果が残っていたら書き出す
-					ff_vram_valid			<= 1'b1;
-					ff_vram_write			<= 1'b1;
-					ff_vram_address			<= ff_cache1_address;
-					ff_vram_wdata			<= ff_cache1_data;
-					ff_vram_data_mask		<= ff_cache1_data_mask;
-				end
-				ff_cache1_data_mask		<= 4'b1111;
-				ff_cache1_data_en		<= 1'b0;
-				ff_flush_state			<= 3'd3;
-			end
-			3'd3: begin
-				if( ff_cache2_data_en && ff_cache2_data_mask != 4'b1111 ) begin
-					//	もし cache#2 の中に書き込み結果が残っていたら書き出す
-					ff_vram_valid			<= 1'b1;
-					ff_vram_write			<= 1'b1;
-					ff_vram_address			<= ff_cache2_address;
-					ff_vram_wdata			<= ff_cache2_data;
-					ff_vram_data_mask		<= ff_cache2_data_mask;
-				end
-				ff_cache2_data_mask		<= 4'b1111;
-				ff_cache2_data_en		<= 1'b0;
-				ff_flush_state			<= 3'd2;
-			end
-			3'd2: begin
-				if( ff_cache3_data_en && ff_cache3_data_mask != 4'b1111 ) begin
-					//	もし cache#3 の中に書き込み結果が残っていたら書き出す
-					ff_vram_valid			<= 1'b1;
-					ff_vram_write			<= 1'b1;
-					ff_vram_address			<= ff_cache3_address;
-					ff_vram_wdata			<= ff_cache3_data;
-					ff_vram_data_mask		<= ff_cache3_data_mask;
-				end
-				ff_cache3_data_mask		<= 4'b1111;
-				ff_cache3_data_en		<= 1'b0;
-				ff_flush_state			<= 3'd1;
-			end
-			3'd1: begin
-				//	書き出し終わり
-				ff_vram_write			<= 1'b0;
-				ff_flush_state			<= 3'd0;
-			end
-			default: begin
-				//	hold
-			end
-			endcase
-		end
-		else if( ff_cache_vram_rdata_en ) begin
-			//	ff_cache_vram_rdata_en は必ず受け取って貰えるので、即下ろす
-			ff_cache_vram_rdata_en	<= 1'b0;
-			ff_busy					<= 1'b0;
-		end
-		else if( cache_vram_valid && w_vram_ready ) begin
-			//	受け取れるタイミングでアクセス要求が来た場合
-			if( !cache_vram_write ) begin
-				//	リードアクセス要求の場合
-				if(      w_cache0_hit ) begin
-					//	Hit cache#0
-					if( ff_cache0_already_read || ff_cache0_data_mask[ cache_vram_address[1:0] ] == 1'b0 ) begin
-						//	cache#0 の中に必要なデータが存在する場合
-						case( cache_vram_address[1:0] )
-						2'd0:	ff_cache_vram_rdata <= ff_cache0_data[ 7: 0];
-						2'd1:	ff_cache_vram_rdata <= ff_cache0_data[15: 8];
-						2'd2:	ff_cache_vram_rdata <= ff_cache0_data[23:16];
-						2'd3:	ff_cache_vram_rdata <= ff_cache0_data[31:24];
-						endcase
-						ff_cache_vram_rdata_en		<= 1'b1;
-					end
-					else begin
-						//	cache#0 の中に必要なデータが存在しない場合（歯抜けで書き込んだだけで、その抜けてる部分のリードだった場合）
-						//	対象のデータをリードする
-						ff_vram_address		<= cache_vram_address[17:2];
-						ff_vram_valid		<= 1'b1;
-						ff_vram_data_mask	<= 4'b1111;
-						ff_update_target	<= 2'd0;
-					end
-					ff_vram_write		<= 1'b0;
-					ff_busy				<= 1'b1;
-				end
-				else if( w_cache1_hit ) begin
-					//	Hit cache#1
-					if( ff_cache1_already_read || ff_cache1_data_mask[ cache_vram_address[1:0] ] == 1'b0 ) begin
-						//	cache#1 の中に必要なデータが存在する場合
-						case( cache_vram_address[1:0] )
-						2'd0:	ff_cache_vram_rdata <= ff_cache1_data[ 7: 0];
-						2'd1:	ff_cache_vram_rdata <= ff_cache1_data[15: 8];
-						2'd2:	ff_cache_vram_rdata <= ff_cache1_data[23:16];
-						2'd3:	ff_cache_vram_rdata <= ff_cache1_data[31:24];
-						endcase
-						ff_cache_vram_rdata_en		<= 1'b1;
-					end
-					else begin
-						//	cache#1 の中に必要なデータが存在しない場合（歯抜けで書き込んだだけで、その抜けてる部分のリードだった場合）
-						//	対象のデータをリードする
-						ff_vram_address		<= cache_vram_address[17:2];
-						ff_vram_valid		<= 1'b1;
-						ff_vram_data_mask	<= 4'b1111;
-						ff_update_target	<= 2'd1;
-					end
-					ff_vram_write		<= 1'b0;
-					ff_busy				<= 1'b1;
-				end
-				else if( w_cache2_hit ) begin
-					//	Hit cache#2
-					if( ff_cache2_already_read || ff_cache2_data_mask[ cache_vram_address[1:0] ] == 1'b0 ) begin
-						//	cache#2 の中に必要なデータが存在する場合
-						case( cache_vram_address[1:0] )
-						2'd0:	ff_cache_vram_rdata <= ff_cache2_data[ 7: 0];
-						2'd1:	ff_cache_vram_rdata <= ff_cache2_data[15: 8];
-						2'd2:	ff_cache_vram_rdata <= ff_cache2_data[23:16];
-						2'd3:	ff_cache_vram_rdata <= ff_cache2_data[31:24];
-						endcase
-						ff_cache_vram_rdata_en		<= 1'b1;
-					end
-					else begin
-						//	cache#2 の中に必要なデータが存在しない場合（歯抜けで書き込んだだけで、その抜けてる部分のリードだった場合）
-						//	対象のデータをリードする
-						ff_vram_address		<= cache_vram_address[17:2];
-						ff_vram_valid		<= 1'b1;
-						ff_vram_data_mask	<= 4'b1111;
-						ff_update_target	<= 2'd2;
-					end
-					ff_vram_write		<= 1'b0;
-					ff_busy				<= 1'b1;
-				end
-				else if( w_cache3_hit ) begin
-					//	Hit cache#3
-					if( ff_cache3_already_read || ff_cache3_data_mask[ cache_vram_address[1:0] ] == 1'b0 ) begin
-						//	cache#3 の中に必要なデータが存在する場合
-						case( cache_vram_address[1:0] )
-						2'd0:	ff_cache_vram_rdata <= ff_cache3_data[ 7: 0];
-						2'd1:	ff_cache_vram_rdata <= ff_cache3_data[15: 8];
-						2'd2:	ff_cache_vram_rdata <= ff_cache3_data[23:16];
-						2'd3:	ff_cache_vram_rdata <= ff_cache3_data[31:24];
-						endcase
-						ff_cache_vram_rdata_en		<= 1'b1;
-					end
-					else begin
-						//	cache#3 の中に必要なデータが存在しない場合（歯抜けで書き込んだだけで、その抜けてる部分のリードだった場合）
-						//	対象のデータをリードする
-						ff_vram_address		<= cache_vram_address[17:2];
-						ff_vram_valid		<= 1'b1;
-						ff_vram_data_mask	<= 4'b1111;
-						ff_update_target	<= 2'd3;
-					end
-					ff_vram_write		<= 1'b0;
-					ff_busy				<= 1'b1;
+			else if( ff_cpu_timer_active ) begin
+				if( ff_cpu_idle_count == 9'd1 ) begin
+					ff_cpu_timer_active <= 1'b0;
+					ff_flush_pending    <= 1'b1;
 				end
 				else begin
-					//	4way の中にアドレスが一致するデータがなかった場合
-					case( ff_update_target )
-					2'd0: begin
-						//	cache#0 に上書きする場合
-						if( ff_cache0_data_en && ff_cache0_data_mask != 4'b1111 ) begin
-							//	上書き前に cache#0 に書きかけのデータがあれば書き出す
-							ff_vram_address				<= ff_cache0_address;
-							ff_vram_valid				<= 1'b1;
-							ff_vram_write				<= 1'b1;
-							ff_vram_wdata				<= ff_cache0_data;
-							ff_vram_data_mask			<= ff_cache0_data_mask;
-							ff_cache0_data_mask			<= 4'b1111;
-							ff_busy						<= 1'b1;
-							ff_after_read				<= 1'b1;
-							ff_cache0_address			<= cache_vram_address[17:2];
-						end
-						else begin
-							//	書きかけのデータが存在しない場合は欲しいデータを読みに行く
-							ff_vram_address				<= cache_vram_address[17:2];
-							ff_vram_valid				<= 1'b1;
-							ff_vram_write				<= 1'b0;
-							ff_vram_data_mask			<= 4'b1111;
-							ff_busy						<= 1'b1;
-						end
-					end
-					2'd1: begin
-						if( ff_cache1_data_en && ff_cache1_data_mask != 4'b1111 ) begin
-							//	上書き前に cache#1 に書きかけのデータがあれば書き出す
-							ff_vram_address				<= ff_cache1_address;
-							ff_vram_valid				<= 1'b1;
-							ff_vram_write				<= 1'b1;
-							ff_vram_wdata				<= ff_cache1_data;
-							ff_vram_data_mask			<= ff_cache1_data_mask;
-							ff_cache1_data_mask			<= 4'b1111;
-							ff_busy						<= 1'b1;
-							ff_after_read				<= 1'b1;
-							ff_cache1_address			<= cache_vram_address[17:2];
-						end
-						else begin
-							//	書きかけのデータが存在しない場合は欲しいデータを読みに行く
-							ff_vram_address				<= cache_vram_address[17:2];
-							ff_vram_valid				<= 1'b1;
-							ff_vram_write				<= 1'b0;
-							ff_vram_data_mask			<= 4'b1111;
-							ff_busy						<= 1'b1;
-						end
-					end
-					2'd2: begin
-						if( ff_cache2_data_en && ff_cache2_data_mask != 4'b1111 ) begin
-							//	上書き前に cache#2 に書きかけのデータがあれば書き出す
-							ff_vram_address				<= ff_cache2_address;
-							ff_vram_valid				<= 1'b1;
-							ff_vram_write				<= 1'b1;
-							ff_vram_wdata				<= ff_cache2_data;
-							ff_vram_data_mask			<= ff_cache2_data_mask;
-							ff_cache2_data_mask			<= 4'b1111;
-							ff_busy						<= 1'b1;
-							ff_after_read				<= 1'b1;
-							ff_cache2_address			<= cache_vram_address[17:2];
-						end
-						else begin
-							//	書きかけのデータが存在しない場合は欲しいデータを読みに行く
-							ff_vram_address				<= cache_vram_address[17:2];
-							ff_vram_valid				<= 1'b1;
-							ff_vram_write				<= 1'b0;
-							ff_vram_data_mask			<= 4'b1111;
-							ff_busy						<= 1'b1;
-						end
-					end
-					2'd3: begin
-						if( ff_cache3_data_en && ff_cache3_data_mask != 4'b1111 ) begin
-							//	上書き前に cache#3 に書きかけのデータがあれば書き出す
-							ff_vram_address				<= ff_cache3_address;
-							ff_vram_valid				<= 1'b1;
-							ff_vram_write				<= 1'b1;
-							ff_vram_wdata				<= ff_cache3_data;
-							ff_vram_data_mask			<= ff_cache3_data_mask;
-							ff_cache3_data_mask			<= 4'b1111;
-							ff_busy						<= 1'b1;
-							ff_after_read				<= 1'b1;
-							ff_cache3_address			<= cache_vram_address[17:2];
-						end
-						else begin
-							//	書きかけのデータが存在しない場合は欲しいデータを読みに行く
-							ff_vram_address				<= cache_vram_address[17:2];
-							ff_vram_valid				<= 1'b1;
-							ff_vram_write				<= 1'b0;
-							ff_vram_data_mask			<= 4'b1111;
-							ff_busy						<= 1'b1;
-						end
-					end
-					endcase
+					ff_cpu_idle_count <= ff_cpu_idle_count - 9'd1;
 				end
 			end
-			else begin
-				//	書き込みアクセスの場合
-				if(      w_cache0_hit ) begin
-					//	cache#0 にヒットなら、その中の対応する位置に上書き
-					case( cache_vram_address[1:0] )
-					2'd0:	begin ff_cache0_data_mask[0] <= 1'b0; ff_cache0_data[ 7: 0] <= cache_vram_wdata; end
-					2'd1:	begin ff_cache0_data_mask[1] <= 1'b0; ff_cache0_data[15: 8] <= cache_vram_wdata; end
-					2'd2:	begin ff_cache0_data_mask[2] <= 1'b0; ff_cache0_data[23:16] <= cache_vram_wdata; end
-					2'd3:	begin ff_cache0_data_mask[3] <= 1'b0; ff_cache0_data[31:24] <= cache_vram_wdata; end
-					endcase
+			case( ff_state )
+			c_idle: begin
+				if( w_cpu_accept || w_command_accept ) begin
+					ff_pending_address <= w_input_address;
+					ff_pending_cpu     <= w_cpu_accept;
+					ff_pending_write   <= w_cpu_accept ? cpu_vram_write : cache_vram_write;
+					ff_pending_wdata   <= w_cpu_accept ? cpu_vram_wdata : cache_vram_wdata;
+					ff_state           <= c_lookup;
 				end
-				else if( w_cache1_hit ) begin
-					//	cache#1 にヒットなら、その中の対応する位置に上書き
-					case( cache_vram_address[1:0] )
-					2'd0:	begin ff_cache1_data_mask[0] <= 1'b0; ff_cache1_data[ 7: 0] <= cache_vram_wdata; end
-					2'd1:	begin ff_cache1_data_mask[1] <= 1'b0; ff_cache1_data[15: 8] <= cache_vram_wdata; end
-					2'd2:	begin ff_cache1_data_mask[2] <= 1'b0; ff_cache1_data[23:16] <= cache_vram_wdata; end
-					2'd3:	begin ff_cache1_data_mask[3] <= 1'b0; ff_cache1_data[31:24] <= cache_vram_wdata; end
-					endcase
+				else if( ff_flush_pending ) begin
+					ff_flush_pending    <= 1'b0;
+					ff_cpu_timer_active <= 1'b0;
+					ff_flush_index      <= 4'd0;
+					ff_state            <= c_flush_scan;
 				end
-				else if( w_cache2_hit ) begin
-					//	cache#2 にヒットなら、その中の対応する位置に上書き
-					case( cache_vram_address[1:0] )
-					2'd0:	begin ff_cache2_data_mask[0] <= 1'b0; ff_cache2_data[ 7: 0] <= cache_vram_wdata; end
-					2'd1:	begin ff_cache2_data_mask[1] <= 1'b0; ff_cache2_data[15: 8] <= cache_vram_wdata; end
-					2'd2:	begin ff_cache2_data_mask[2] <= 1'b0; ff_cache2_data[23:16] <= cache_vram_wdata; end
-					2'd3:	begin ff_cache2_data_mask[3] <= 1'b0; ff_cache2_data[31:24] <= cache_vram_wdata; end
-					endcase
-				end
-				else if( w_cache3_hit ) begin
-					//	cache#3 にヒットなら、その中の対応する位置に上書き
-					case( cache_vram_address[1:0] )
-					2'd0:	begin ff_cache3_data_mask[0] <= 1'b0; ff_cache3_data[ 7: 0] <= cache_vram_wdata; end
-					2'd1:	begin ff_cache3_data_mask[1] <= 1'b0; ff_cache3_data[15: 8] <= cache_vram_wdata; end
-					2'd2:	begin ff_cache3_data_mask[2] <= 1'b0; ff_cache3_data[23:16] <= cache_vram_wdata; end
-					2'd3:	begin ff_cache3_data_mask[3] <= 1'b0; ff_cache3_data[31:24] <= cache_vram_wdata; end
-					endcase
-				end
-				else if( ff_cache0_data_en && ff_cache1_data_en && ff_cache2_data_en && ff_cache3_data_en ) begin
-					//	全ての cache が使用済みで、ヒットしない場合は ff_update_target が示す cache を吐き出して上書き
-					case( ff_update_target )
-					2'd0: begin
-						//	Flush cache#0
-						if( ff_cache0_data_mask == 4'b1111 ) begin
-							ff_vram_valid		<= 1'b0;
+			end
+			c_lookup: begin
+				ff_target      <= w_target;
+				ff_lookup_hit  <= w_hit_found;
+				ff_lookup_free <= w_free_found;
+				ff_lookup_age  <= w_previous_age;
+				ff_state       <= c_process;
+			end
+			c_process: begin
+					for( index = 0; index < 8; index = index + 1 ) begin
+						if( index == ff_target ) begin
+							ff_age[index] <= 3'd0;
+						end
+						else if( ff_valid[index] && ff_age[index] < ff_lookup_age ) begin
+							ff_age[index] <= ff_age[index] + 3'd1;
+						end
+					end
+					if( ff_pending_write ) begin
+						ff_state <= c_idle;
+						if( !ff_lookup_hit && !ff_lookup_free && ff_mask[ff_target] != 4'b1111 ) begin
+							ff_vram_address <= ff_address[ff_target];
+							ff_vram_valid   <= 1'b1;
+							ff_vram_write   <= 1'b1;
+							ff_vram_wdata   <= ff_data[ff_target];
+							ff_vram_mask    <= ff_mask[ff_target];
+							ff_state        <= c_evict_write;
+						end
+						if( !ff_lookup_hit ) begin
+							ff_address[ff_target] <= ff_pending_address[17:2];
+							ff_mask[ff_target]    <= 4'b1111;
+							ff_loaded[ff_target]  <= 1'b0;
+						end
+						ff_valid[ff_target] <= 1'b1;
+						ff_data[ff_target][ff_pending_address[1:0]*8 +: 8] <= ff_pending_wdata;
+						ff_mask[ff_target][ff_pending_address[1:0]] <= 1'b0;
+					end
+					else if( ff_lookup_hit && (ff_loaded[ff_target] || !ff_mask[ff_target][ff_pending_address[1:0]]) ) begin
+						ff_state <= c_idle;
+						if( ff_pending_cpu ) begin
+							ff_cpu_rdata    <= ff_data[ff_target][ff_pending_address[1:0]*8 +: 8];
+							ff_cpu_rdata_en <= 1'b1;
 						end
 						else begin
-							ff_vram_valid		<= 1'b1;
-							ff_busy				<= 1'b1;
+							ff_cache_rdata    <= ff_data[ff_target][ff_pending_address[1:0]*8 +: 8];
+							ff_cache_rdata_en <= 1'b1;
 						end
-						ff_vram_address			<= ff_cache0_address;
-						ff_vram_write			<= 1'b1;
-						ff_vram_wdata			<= ff_cache0_data;
-						ff_vram_data_mask		<= ff_cache0_data_mask;
-						ff_cache0_address		<= cache_vram_address[17:2];
-						ff_cache0_already_read	<= 1'b0;
-						case( cache_vram_address[1:0] )
-						2'd0:	begin ff_cache0_data_mask <= 4'b1110; ff_cache0_data[ 7: 0] <= cache_vram_wdata; end
-						2'd1:	begin ff_cache0_data_mask <= 4'b1101; ff_cache0_data[15: 8] <= cache_vram_wdata; end
-						2'd2:	begin ff_cache0_data_mask <= 4'b1011; ff_cache0_data[23:16] <= cache_vram_wdata; end
-						2'd3:	begin ff_cache0_data_mask <= 4'b0111; ff_cache0_data[31:24] <= cache_vram_wdata; end
-						endcase
 					end
-					2'd1:begin
-						//	Flush cache1
-						if( ff_cache1_data_mask == 4'b1111 ) begin
-							ff_vram_valid		<= 1'b0;
+					else begin
+						if( !ff_lookup_hit ) begin
+							ff_address[ff_target] <= ff_pending_address[17:2];
+							ff_mask[ff_target]    <= 4'b1111;
+							ff_loaded[ff_target]  <= 1'b0;
+							ff_valid[ff_target]   <= 1'b1;
+						end
+						if( !ff_lookup_hit && !ff_lookup_free && ff_mask[ff_target] != 4'b1111 ) begin
+							ff_vram_address <= ff_address[ff_target];
+							ff_vram_valid   <= 1'b1;
+							ff_vram_write   <= 1'b1;
+							ff_vram_wdata   <= ff_data[ff_target];
+							ff_vram_mask    <= ff_mask[ff_target];
+							ff_state        <= c_evict_read;
 						end
 						else begin
-							ff_vram_valid		<= 1'b1;
-							ff_busy				<= 1'b1;
+							ff_vram_address <= ff_pending_address[17:2];
+							ff_vram_valid   <= 1'b1;
+							ff_vram_write   <= 1'b0;
+							ff_vram_mask    <= 4'b1111;
+							ff_state        <= c_read_request;
 						end
-						ff_vram_address			<= ff_cache1_address;
-						ff_vram_write			<= 1'b1;
-						ff_vram_wdata			<= ff_cache1_data;
-						ff_vram_data_mask		<= ff_cache1_data_mask;
-						ff_cache1_address		<= cache_vram_address[17:2];
-						ff_cache1_already_read	<= 1'b0;
-						case( cache_vram_address[1:0] )
-						2'd0:	begin ff_cache1_data_mask <= 4'b1110; ff_cache1_data[ 7: 0] <= cache_vram_wdata; end
-						2'd1:	begin ff_cache1_data_mask <= 4'b1101; ff_cache1_data[15: 8] <= cache_vram_wdata; end
-						2'd2:	begin ff_cache1_data_mask <= 4'b1011; ff_cache1_data[23:16] <= cache_vram_wdata; end
-						2'd3:	begin ff_cache1_data_mask <= 4'b0111; ff_cache1_data[31:24] <= cache_vram_wdata; end
-						endcase
 					end
-					2'd2:begin
-						//	Flush cache2
-						if( ff_cache2_data_mask == 4'b1111 ) begin
-							ff_vram_valid		<= 1'b0;
+			end
+			c_evict_write: begin
+				if( ff_vram_valid && command_vram_ready ) begin
+					ff_vram_valid <= 1'b0;
+					ff_state      <= c_idle;
+				end
+			end
+			c_evict_read: begin
+				if( ff_vram_valid && command_vram_ready ) begin
+					ff_vram_address <= ff_pending_address[17:2];
+					ff_vram_write   <= 1'b0;
+					ff_vram_mask    <= 4'b1111;
+					ff_state        <= c_read_request;
+				end
+			end
+			c_read_request: begin
+				if( ff_vram_valid && command_vram_ready ) begin
+					ff_vram_valid <= 1'b0;
+					ff_state      <= c_read_wait;
+				end
+			end
+			c_read_wait: begin
+				if( command_vram_rdata_en ) begin
+					for( index = 0; index < 4; index = index + 1 ) begin
+						if( ff_mask[ff_target][index] ) begin
+							ff_data[ff_target][index*8 +: 8] <= command_vram_rdata[index*8 +: 8];
 						end
-						else begin
-							ff_vram_valid		<= 1'b1;
-							ff_busy				<= 1'b1;
-						end
-						ff_vram_address			<= ff_cache2_address;
-						ff_vram_write			<= 1'b1;
-						ff_vram_wdata			<= ff_cache2_data;
-						ff_vram_data_mask		<= ff_cache2_data_mask;
-						ff_cache2_address		<= cache_vram_address[17:2];
-						ff_cache2_already_read	<= 1'b0;
-						case( cache_vram_address[1:0] )
-						2'd0:	begin ff_cache2_data_mask <= 4'b1110; ff_cache2_data[ 7: 0] <= cache_vram_wdata; end
-						2'd1:	begin ff_cache2_data_mask <= 4'b1101; ff_cache2_data[15: 8] <= cache_vram_wdata; end
-						2'd2:	begin ff_cache2_data_mask <= 4'b1011; ff_cache2_data[23:16] <= cache_vram_wdata; end
-						2'd3:	begin ff_cache2_data_mask <= 4'b0111; ff_cache2_data[31:24] <= cache_vram_wdata; end
-						endcase
 					end
-					2'd3:begin
-						//	Flush cache3
-						if( ff_cache3_data_mask == 4'b1111 ) begin
-							ff_vram_valid		<= 1'b0;
-						end
-						else begin
-							ff_vram_valid		<= 1'b1;
-							ff_busy				<= 1'b1;
-						end
-						ff_vram_address			<= ff_cache3_address;
-						ff_vram_write			<= 1'b1;
-						ff_vram_wdata			<= ff_cache3_data;
-						ff_vram_data_mask		<= ff_cache3_data_mask;
-						ff_cache3_address		<= cache_vram_address[17:2];
-						ff_cache3_already_read	<= 1'b0;
-						case( cache_vram_address[1:0] )
-						2'd0:	begin ff_cache3_data_mask <= 4'b1110; ff_cache3_data[ 7: 0] <= cache_vram_wdata; end
-						2'd1:	begin ff_cache3_data_mask <= 4'b1101; ff_cache3_data[15: 8] <= cache_vram_wdata; end
-						2'd2:	begin ff_cache3_data_mask <= 4'b1011; ff_cache3_data[23:16] <= cache_vram_wdata; end
-						2'd3:	begin ff_cache3_data_mask <= 4'b0111; ff_cache3_data[31:24] <= cache_vram_wdata; end
-						endcase
+					ff_loaded[ff_target] <= 1'b1;
+					if( ff_pending_cpu ) begin
+						ff_cpu_rdata    <= ff_mask[ff_target][ff_pending_address[1:0]] ?
+						                   command_vram_rdata[ff_pending_address[1:0]*8 +: 8] :
+						                   ff_data[ff_target][ff_pending_address[1:0]*8 +: 8];
+						ff_cpu_rdata_en <= 1'b1;
 					end
-					endcase
-					ff_update_target	<= ff_update_target + 2'd1;
-				end
-				else if( !ff_cache0_data_en ) begin
-					//	Miss hit, and update cache0.
-					ff_cache0_address		<= cache_vram_address[17:2];
-					ff_cache0_already_read	<= 1'b0;
-					ff_cache0_data_en		<= 1'b1;
-					case( cache_vram_address[1:0] )
-					2'd0:	begin ff_cache0_data_mask <= 4'b1110; ff_cache0_data[ 7: 0] <= cache_vram_wdata; end
-					2'd1:	begin ff_cache0_data_mask <= 4'b1101; ff_cache0_data[15: 8] <= cache_vram_wdata; end
-					2'd2:	begin ff_cache0_data_mask <= 4'b1011; ff_cache0_data[23:16] <= cache_vram_wdata; end
-					2'd3:	begin ff_cache0_data_mask <= 4'b0111; ff_cache0_data[31:24] <= cache_vram_wdata; end
-					endcase
-				end
-				else if( !ff_cache1_data_en ) begin
-					//	Miss hit, and update cache0.
-					ff_cache1_address		<= cache_vram_address[17:2];
-					ff_cache1_already_read	<= 1'b0;
-					ff_cache1_data_en		<= 1'b1;
-					case( cache_vram_address[1:0] )
-					2'd0:	begin ff_cache1_data_mask <= 4'b1110; ff_cache1_data[ 7: 0] <= cache_vram_wdata; end
-					2'd1:	begin ff_cache1_data_mask <= 4'b1101; ff_cache1_data[15: 8] <= cache_vram_wdata; end
-					2'd2:	begin ff_cache1_data_mask <= 4'b1011; ff_cache1_data[23:16] <= cache_vram_wdata; end
-					2'd3:	begin ff_cache1_data_mask <= 4'b0111; ff_cache1_data[31:24] <= cache_vram_wdata; end
-					endcase
-				end
-				else if( !ff_cache2_data_en ) begin
-					//	Miss hit, and update cache0.
-					ff_cache2_address		<= cache_vram_address[17:2];
-					ff_cache2_already_read	<= 1'b0;
-					ff_cache2_data_en		<= 1'b1;
-					case( cache_vram_address[1:0] )
-					2'd0:	begin ff_cache2_data_mask <= 4'b1110; ff_cache2_data[ 7: 0] <= cache_vram_wdata; end
-					2'd1:	begin ff_cache2_data_mask <= 4'b1101; ff_cache2_data[15: 8] <= cache_vram_wdata; end
-					2'd2:	begin ff_cache2_data_mask <= 4'b1011; ff_cache2_data[23:16] <= cache_vram_wdata; end
-					2'd3:	begin ff_cache2_data_mask <= 4'b0111; ff_cache2_data[31:24] <= cache_vram_wdata; end
-					endcase
-				end
-				else begin	//	if( ff_cache3_data_en ) begin
-					//	Miss hit, and update cache0.
-					ff_cache3_address		<= cache_vram_address[17:2];
-					ff_cache3_already_read	<= 1'b0;
-					ff_cache3_data_en		<= 1'b1;
-					case( cache_vram_address[1:0] )
-					2'd0:	begin ff_cache3_data_mask <= 4'b1110; ff_cache3_data[ 7: 0] <= cache_vram_wdata; end
-					2'd1:	begin ff_cache3_data_mask <= 4'b1101; ff_cache3_data[15: 8] <= cache_vram_wdata; end
-					2'd2:	begin ff_cache3_data_mask <= 4'b1011; ff_cache3_data[23:16] <= cache_vram_wdata; end
-					2'd3:	begin ff_cache3_data_mask <= 4'b0111; ff_cache3_data[31:24] <= cache_vram_wdata; end
-					endcase
+					else begin
+						ff_cache_rdata    <= ff_mask[ff_target][ff_pending_address[1:0]] ?
+						                     command_vram_rdata[ff_pending_address[1:0]*8 +: 8] :
+						                     ff_data[ff_target][ff_pending_address[1:0]*8 +: 8];
+						ff_cache_rdata_en <= 1'b1;
+					end
+					ff_state <= c_idle;
 				end
 			end
-		end
-		else if( command_vram_rdata_en ) begin
-			//	SDRAMから読んだデータを cache#n に書き込む
-			ff_busy						<= 1'b0;
-			case( ff_update_target )
-			2'd0:	begin
-				//	cache#0 を読んだデータで更新する
-				ff_cache0_address		<= ff_vram_address;
-				ff_cache0_data[ 7: 0]	<= ff_cache0_data_mask[0] ? command_vram_rdata[ 7: 0]: ff_cache0_data[ 7: 0];
-				ff_cache0_data[15: 8]	<= ff_cache0_data_mask[1] ? command_vram_rdata[15: 8]: ff_cache0_data[15: 8];
-				ff_cache0_data[23:16]	<= ff_cache0_data_mask[2] ? command_vram_rdata[23:16]: ff_cache0_data[23:16];
-				ff_cache0_data[31:24]	<= ff_cache0_data_mask[3] ? command_vram_rdata[31:24]: ff_cache0_data[31:24];
-				ff_cache0_data_en		<= 1'b1;
-				ff_cache0_already_read	<= 1'b1;
+			c_flush_scan: begin
+				if( ff_flush_index == 4'd8 ) begin
+					ff_flush_end     <= ff_flush_command || cache_flush_start;
+					ff_flush_command <= 1'b0;
+					ff_state         <= c_idle;
+				end
+				else if( ff_valid[ff_flush_index[2:0]] && ff_mask[ff_flush_index[2:0]] != 4'b1111 ) begin
+					ff_vram_address <= ff_address[ff_flush_index[2:0]];
+					ff_vram_valid   <= 1'b1;
+					ff_vram_write   <= 1'b1;
+					ff_vram_wdata   <= ff_data[ff_flush_index[2:0]];
+					ff_vram_mask    <= ff_mask[ff_flush_index[2:0]];
+					ff_state        <= c_flush_write;
+				end
+				else begin
+					ff_valid[ff_flush_index[2:0]] <= 1'b0;
+					ff_flush_index <= ff_flush_index + 4'd1;
+				end
 			end
-			2'd1:	begin
-				//	cache#1 を読んだデータで更新する
-				ff_cache1_address		<= ff_vram_address;
-				ff_cache1_data[ 7: 0]	<= ff_cache1_data_mask[0] ? command_vram_rdata[ 7: 0]: ff_cache1_data[ 7: 0];
-				ff_cache1_data[15: 8]	<= ff_cache1_data_mask[1] ? command_vram_rdata[15: 8]: ff_cache1_data[15: 8];
-				ff_cache1_data[23:16]	<= ff_cache1_data_mask[2] ? command_vram_rdata[23:16]: ff_cache1_data[23:16];
-				ff_cache1_data[31:24]	<= ff_cache1_data_mask[3] ? command_vram_rdata[31:24]: ff_cache1_data[31:24];
-				ff_cache1_data_en		<= 1'b1;
-				ff_cache1_already_read	<= 1'b1;
+			c_flush_write: begin
+				if( ff_vram_valid && command_vram_ready ) begin
+					ff_vram_valid <= 1'b0;
+					ff_valid[ff_flush_index[2:0]] <= 1'b0;
+					ff_flush_index <= ff_flush_index + 4'd1;
+					ff_state       <= c_flush_scan;
+				end
 			end
-			2'd2:	begin
-				//	cache#2 を読んだデータで更新する
-				ff_cache2_address		<= ff_vram_address;
-				ff_cache2_data[ 7: 0]	<= ff_cache2_data_mask[0] ? command_vram_rdata[ 7: 0]: ff_cache2_data[ 7: 0];
-				ff_cache2_data[15: 8]	<= ff_cache2_data_mask[1] ? command_vram_rdata[15: 8]: ff_cache2_data[15: 8];
-				ff_cache2_data[23:16]	<= ff_cache2_data_mask[2] ? command_vram_rdata[23:16]: ff_cache2_data[23:16];
-				ff_cache2_data[31:24]	<= ff_cache2_data_mask[3] ? command_vram_rdata[31:24]: ff_cache2_data[31:24];
-				ff_cache2_data_en		<= 1'b1;
-				ff_cache2_already_read	<= 1'b1;
-			end
-			2'd3:	begin
-				//	cache#3 を読んだデータで更新する
-				ff_cache3_address		<= ff_vram_address;
-				ff_cache3_data[ 7: 0]	<= ff_cache3_data_mask[0] ? command_vram_rdata[ 7: 0]: ff_cache3_data[ 7: 0];
-				ff_cache3_data[15: 8]	<= ff_cache3_data_mask[1] ? command_vram_rdata[15: 8]: ff_cache3_data[15: 8];
-				ff_cache3_data[23:16]	<= ff_cache3_data_mask[2] ? command_vram_rdata[23:16]: ff_cache3_data[23:16];
-				ff_cache3_data[31:24]	<= ff_cache3_data_mask[3] ? command_vram_rdata[31:24]: ff_cache3_data[31:24];
-				ff_cache3_data_en		<= 1'b1;
-				ff_cache3_already_read	<= 1'b1;
-			end
+			default: ff_state <= c_idle;
 			endcase
-
-			case( cache_vram_address[1:0] )
-			2'd0:	ff_cache_vram_rdata <= command_vram_rdata[ 7: 0];
-			2'd1:	ff_cache_vram_rdata <= command_vram_rdata[15: 8];
-			2'd2:	ff_cache_vram_rdata <= command_vram_rdata[23:16];
-			2'd3:	ff_cache_vram_rdata <= command_vram_rdata[31:24];
-			endcase
-
-			ff_cache_vram_rdata_en		<= 1'b1;
-			ff_update_target			<= ff_update_target + 2'd1;
 		end
 	end
-
-	// --------------------------------------------------------------------
-	//	VRAM Access
-	// --------------------------------------------------------------------
-	assign w_vram_ready				= ~(ff_vram_valid | ff_busy);
-	assign cache_vram_ready			= w_vram_ready;
-	assign cache_vram_rdata			= ff_cache_vram_rdata;
-	assign cache_vram_rdata_en		= ff_cache_vram_rdata_en;
-	assign command_vram_address		= { ff_vram_address, 2'd0 };
-	assign command_vram_valid		= ff_vram_valid;
-	assign command_vram_write		= ff_vram_write;
-	assign command_vram_wdata		= ff_vram_wdata;
-	assign command_vram_wdata_mask	= ff_vram_data_mask;
 endmodule

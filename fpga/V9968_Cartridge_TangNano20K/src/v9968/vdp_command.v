@@ -57,15 +57,16 @@
 module vdp_command (
 	input				reset_n,
 	input				clk,
-	//	VRAM interface
-	output		[17:0]	command_vram_address,
-	output				command_vram_valid,
-	input				command_vram_ready,
-	output				command_vram_write,
-	output		[31:0]	command_vram_wdata,
-	output		[3:0]	command_vram_wdata_mask,
-	input		[31:0]	command_vram_rdata,
-	input				command_vram_rdata_en,
+	//	Shared cache interface
+	output		[17:0]	cache_vram_address,
+	output				cache_vram_valid,
+	input				cache_vram_ready,
+	output				cache_vram_write,
+	output		[7:0]	cache_vram_wdata,
+	input		[7:0]	cache_vram_rdata,
+	input				cache_vram_rdata_en,
+	output				cache_flush_start,
+	input				cache_flush_end,
 	//	CPU interface
 	input				register_write,
 	input		[5:0]	register_num,
@@ -201,16 +202,17 @@ module vdp_command (
 	reg					ff_fg4;
 	reg			[3:0]	ff_logical_opration;
 	reg			[3:0]	ff_command;
+	reg			[2:0]	ff_pixel_step;
 	reg					ff_start;
 
 	reg			[17:0]	ff_cache_vram_address;
 	reg					ff_cache_vram_valid;
-	wire				w_cache_vram_ready;
 	reg					ff_cache_vram_write;
 	reg			[7:0]	ff_cache_vram_wdata;
+	reg					ff_cache_flush_start;
+	wire				w_cache_vram_ready;
 	wire		[7:0]	w_cache_vram_rdata;
 	wire				w_cache_vram_rdata_en;
-	reg					ff_cache_flush_start;
 	wire				w_cache_flush_end;
 	wire				w_effective_mode;
 	wire		[1:0]	w_bpp;					//	c_bpp_Xbit
@@ -236,6 +238,7 @@ module vdp_command (
 	reg					ff_dy_active;
 	wire				w_sx_overflow;
 	wire				w_dx_overflow;
+	wire				w_sy_overflow;
 	wire				w_dy_overflow;
 	reg			[2:0]	ff_bit_count;
 	reg			[7:0]	ff_fore_color;
@@ -304,8 +307,7 @@ module vdp_command (
 	assign w_effective_mode		= reg_command_enable || ff_fg4 || (ff_screen_mode[c_g4] || ff_screen_mode[c_g5] || ff_screen_mode[c_g6] || ff_screen_mode[c_g7]);
 	assign w_bpp				= (ff_screen_mode[c_g6] || ff_screen_mode[c_g4]) ? c_bpp_4bit:
 	            				  (ff_screen_mode[c_g5]) ? c_bpp_2bit: c_bpp_8bit;
-	assign w_next				= (ff_screen_mode_clone[c_g7] || ff_command[3:2] != 2'b11) ? 10'd1:
-	             				  (ff_screen_mode_clone[c_g5]) ? 10'd4: 10'd2;
+	assign w_next				= { 7'd0, ff_pixel_step };
 	assign w_512pixel			= (ff_screen_mode_clone[c_g5] || ff_screen_mode_clone[c_g6]);
 
 	assign vram_access_mask		= ff_mxc;
@@ -707,6 +709,7 @@ module vdp_command (
 	assign w_next_dy		= ff_diy ? ( { 2'd0, ff_dy } - 13'd1  ): ( { 2'd0, ff_dy } + 13'd1  );
 	assign w_sx_overflow	= ff_sx_active && (w_next_sx[9] || (!ff_512pixel && w_next_sx[8]));
 	assign w_dx_overflow	= ff_dx_active && (w_next_dx[9] || (!ff_512pixel && w_next_dx[8]));
+	assign w_sy_overflow	= ff_sy_active && ff_diy && (ff_sy[20:8] == 13'd0);
 	assign w_dy_overflow	= w_next_dy[12];
 
 	// --------------------------------------------------------------------
@@ -843,8 +846,8 @@ module vdp_command (
 	end
 
 	assign w_ny			= { 1'b0, ff_ny } + 12'd1;
-	assign w_nx_max		= (ff_screen_mode[c_g7] || ff_command[3:2] != 2'b11) ? reg_nx:
-	             		  (ff_screen_mode[c_g5]) ? { reg_nx[10:2], 2'd0 }: { reg_nx[10:1], 1'd0 };
+	assign w_nx_max		= ff_pixel_step[2] ? { reg_nx[10:2], 2'd0 }:
+	            		  ff_pixel_step[1] ? { reg_nx[10:1], 1'd0 }: reg_nx;
 	assign w_nx_end		= (ff_nx == w_nx_max && ff_command != c_ymmm);
 	assign w_ny_end		= (ff_ny == reg_ny) | w_ny[11] | (w_ny[10] & ~reg_vram256k_mode);
 
@@ -992,6 +995,23 @@ module vdp_command (
 		end
 		else begin
 			ff_start			<= 1'b0;
+		end
+	end
+
+	always @( posedge clk ) begin
+		if( !reset_n ) begin
+			ff_pixel_step	<= 3'd1;
+		end
+		else if( register_write && (register_num == 6'd46) ) begin
+			if( register_data[7:6] != 2'b11 || !(ff_screen_mode_clone[c_g4] || ff_screen_mode_clone[c_g5] || ff_screen_mode_clone[c_g6] || ff_fg4) ) begin
+				ff_pixel_step	<= 3'd1;
+			end
+			else if( ff_screen_mode_clone[c_g5] ) begin
+				ff_pixel_step	<= 3'd4;
+			end
+			else begin
+				ff_pixel_step	<= 3'd2;
+			end
 		end
 	end
 
@@ -1409,7 +1429,7 @@ module vdp_command (
 				ff_cache_vram_write		<= 1'b1;
 				ff_cache_vram_wdata		<= w_destination;
 				ff_count_valid			<= 1'b1;
-				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_dy_overflow) ) begin
+				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_sy_overflow || w_dy_overflow) ) begin
 					ff_state				<= c_state_pre_finish;
 				end
 				else if( reg_command_high_speed_mode ) begin
@@ -1549,7 +1569,7 @@ module vdp_command (
 				ff_cache_vram_write		<= 1'b1;
 				ff_cache_vram_wdata		<= ff_read_byte;
 				ff_count_valid			<= 1'b1;
-				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_dy_overflow) ) begin
+				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_sy_overflow || w_dy_overflow) ) begin
 					ff_state				<= c_state_pre_finish;
 				end
 				else if( reg_command_high_speed_mode ) begin
@@ -1583,7 +1603,7 @@ module vdp_command (
 				ff_cache_vram_write		<= 1'b1;
 				ff_cache_vram_wdata		<= ff_read_byte;
 				ff_count_valid			<= 1'b1;
-				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_dy_overflow) ) begin
+				if( (w_nx_end || w_sx_overflow || w_dx_overflow) && (w_ny_end || w_sy_overflow || w_dy_overflow) ) begin
 					ff_state				<= c_state_pre_finish;
 				end
 				else if( reg_command_high_speed_mode ) begin
@@ -1893,28 +1913,15 @@ module vdp_command (
 	// --------------------------------------------------------------------
 	//	VRAM Access Cache
 	// --------------------------------------------------------------------
-	vdp_command_cache u_cache (
-		.reset_n						( reset_n						),
-		.clk							( clk							),
-		.start							( ff_start						),
-		.cache_vram_address				( ff_cache_vram_address			),
-		.cache_vram_valid				( ff_cache_vram_valid			),
-		.cache_vram_ready				( w_cache_vram_ready			),
-		.cache_vram_write				( ff_cache_vram_write			),
-		.cache_vram_wdata				( ff_cache_vram_wdata			),
-		.cache_vram_rdata				( w_cache_vram_rdata			),
-		.cache_vram_rdata_en			( w_cache_vram_rdata_en			),
-		.cache_flush_start				( ff_cache_flush_start			),
-		.cache_flush_end				( w_cache_flush_end				),
-		.command_vram_address			( command_vram_address			),
-		.command_vram_valid				( command_vram_valid			),
-		.command_vram_ready				( command_vram_ready			),
-		.command_vram_write				( command_vram_write			),
-		.command_vram_wdata				( command_vram_wdata			),
-		.command_vram_wdata_mask		( command_vram_wdata_mask		),
-		.command_vram_rdata				( command_vram_rdata			),
-		.command_vram_rdata_en			( command_vram_rdata_en			)
-	);
+	assign cache_vram_address		= ff_cache_vram_address;
+	assign cache_vram_valid			= ff_cache_vram_valid;
+	assign cache_vram_write			= ff_cache_vram_write;
+	assign cache_vram_wdata			= ff_cache_vram_wdata;
+	assign cache_flush_start		= ff_cache_flush_start;
+	assign w_cache_vram_ready		= cache_vram_ready;
+	assign w_cache_vram_rdata		= cache_vram_rdata;
+	assign w_cache_vram_rdata_en	= cache_vram_rdata_en;
+	assign w_cache_flush_end		= cache_flush_end;
 
 	// --------------------------------------------------------------------
 	//	Status registers

@@ -4,6 +4,8 @@
 
 Date: 2026-09-27. Base: HRA!'s cartridge project (Tang Nano 20K, Gowin GW2AR-18C FPGA), version 86361d8, with geo3d integrated by the script `geo3d/integration/apply_geo3d_patch.py`. Branch `geo3d-phase2`. Everything from this stage is on GitHub (alexmoncks/V9968_Cartridge): branch `geo3d-phase2` at `eb9be4f` and `main` at `a72a761`. The folder layout of section 4 (HRA!'s project untouched in `fpga/V9968_Cartridge_TangNano20K/`, the project with geo3d next to it in `fpga/V9968_Cartridge_TangNano20K_geo3d/`) came after those commits.
 
+**Update, 2026-10-02:** the geo3d project now builds on HRA!'s 4410365, with his new command cache; what changed and the new figures are in [section 13](#13-update-of-2-october-2026-hras-4410365). Sections 1 to 12 describe the 86361d8 base.
+
 ## 1. Summary
 
 | Question | Answer |
@@ -299,3 +301,61 @@ Both ROMs use the Star Wars music (MOD) and do not go into git. The other ROMs i
 4. **Old ROMs in the delivery folder:** `GEO3D_88_hardware_real.ROM`, the `*_crawlonly` files, `GEO3D_98_fmconv` and `GEO3D_98_midi` do not have the detection. Rebuild or delete them.
 5. **Gowin Programmer menu names** in `FLASH.txt`: they come from Sipeed's procedure for the Tang Nano 20K and were not checked on this machine.
 6. **Disk space:** the experiment folders `C:\Projects\mmsoft\g3x` (561 MB) and `geo3d_review_gw*` are outside the repository and can be deleted.
+
+## 13. Update of 2 October 2026: HRA!'s 4410365
+
+The geo3d project is now generated from HRA!'s upstream **4410365** (30 September 2026), merged into `geo3d-phase2`; his folder is again byte-identical to his upstream. Sections 1 to 12 describe the 86361d8 base and are kept as they were.
+
+**HRA!'s changes since 86361d8:**
+- 88132d2: the command cache rewritten. It now has 8 lines of 32 bits with LRU replacement (4 lines, round robin before), it sits in `vdp.v` instead of inside `vdp_command.v`, the CPU's VRAM accesses go through it too, it is written back at the end of each command and 256 clocks after the last CPU access, and it is no longer cleared when a command starts.
+- 4410365: SCREEN 2 with R#25 CMD = 1 skipped one byte; the pixel step is now a register loaded by the R#46 write.
+- ef12ee3: HMMM / LMMM / YMMM with DIY = 1 stop when the source reaches Y = 0.
+- 05f9806: a status read resets the port #1 byte pair. 6acdb4d: R#4 A17 in V9958 mode. fda3f26: horizontal magnifier. 9917548: sprite makeup and timing control.
+- His project settings: `Route_Maxfan` 100 to 50 (copied into the geo3d project, as the script does with all of them).
+
+**What changed on the geo3d side:** nothing in `geo3d/rtl`, and nothing in the patch: `apply_geo3d_patch.py` applied to the new `vdp.v` as it was. Because the hook sits in front of `vdp_command`, geo3d's own R#46 write also loads the new pixel-step register. The two test benches that instantiate HRA!'s engine directly, `sim/hra/tb_hra_cmd.v` and `sim/tb_system.v`, now instantiate `vdp_command_cache.v` next to it, wired as in `vdp.v` (CPU port idle).
+
+| Check, on 4410365 | Result |
+|---|---|
+| Patched `vdp.v` against upstream | The diff is the 4 ports, the 3 hookup lines of `u_command` and the `ext_cmd_ce` assign; the 20 `vdp_*.v` submodules are identical |
+| VDP equivalence with geo3d idle | Formal proof (Yosys): 755 of 755 points (the mutant with `ext_cmd_wr` = 1 fails with 15 unproven points, as it should). Lockstep simulation of both cartridges, 3.66 million cycles, every pin: identical |
+| Integration script | 47 of 47 tests; `--check`: current |
+| `run_all.sh` (geo3d simulations) | All pass: 4,000 vectors, 24 wireframe scenes, 16 face scenes, 12 textured scenes, the three Z80 demos; HRA!'s RTL against the LRMM / LINE model: 0 divergent bytes (900 + 300 commands); end to end, 130 pages identical; the three showcase samples, 0 divergent pages; demo ROM traffic identical to the verified traffic |
+| Whole cartridge (`tb_cart.sv`) | regs, wire, faces, tex, busy, DIP 98h, regs 98h, faces in V9958 mode, real texture demo: all pass. VRAM identical to the model, 0 register writes with CE = 1 (39,158 geo3d writes in the demo), the command sequences identical to the 86361d8 runs; only the cycle counts change |
+| HRA!'s test benches | `test_command_cache`: all pass (iverilog). `tb_port1_latch_reset`: 12 of 12 (Verilator). His other benches need ModelSim (iverilog 12 lacks `break`; `test_vdp_cpu_interface/tb` and `test_vdp_timing_control_ssg` connect ports the RTL no longer has) |
+| Gowin EDA V1.9.12.03, in place | 0 negative-slack paths in all 74 tables |
+
+**Resources and timing (Gowin):**
+
+| | HRA! 4410365 (his build) | geo3d on 86361d8 | geo3d on 4410365 |
+|---|---|---|---|
+| Logic (LUT + ALU) | 7,469 (37%) | 12,756 (62%) | 13,130 (64%) |
+| Registers | 4,513 (29%) | 7,536 (48%) | 7,863 (50%) |
+| CLS | 5,768 (56%) | 8,886 (86%) | 9,137 (89%) |
+| BSRAM / DSP | 10 / 3 | 22 / 9 | 22 / 9 |
+| Fmax clk85m (85.909 MHz) | 90.2 MHz | 86.34 MHz | 85.91 MHz |
+| Fmax clk42g (42.955 MHz) | - | 64.07 MHz | 68.11 MHz |
+| Worst setup slack 85 to 85 | | +0.058 ns | **+0.001 ns** |
+| Worst hold 42g to 85 / 85 to 42g | | +0.039 / +0.047 ns | +0.039 / +0.042 ns |
+
+geo3d's own share is unchanged (about +5,660 logic, +3,350 registers). The +0.001 ns path is HRA!'s (sprite logic, `ff_screen_pos_x_clone` to `ff_sprite_overmap_id`), and it moves with placement: a later RTL change can turn it negative, which `build_gowin.sh` reports with exit code 2. Bitstream SHA-256: `c13b99ac...` with CRLF line endings as Gowin writes it, `5bb80bd0...` with LF.
+
+**Command timing with the new cache** (high-speed mode, 85.9 MHz, same benches on both bases):
+
+| Measurement | 86361d8 | 4410365 |
+|---|---|---|
+| LRMM, clocks per pixel (`check_lrmm.py`, VRAM always ready) | 8.8 | 11.6 |
+| LINE, clocks per pixel | 5.9 | 7.0 |
+| LINE, V9938-compatible timing | 224 | 225 |
+| Longest frame of the textured demo (`tb_system.v`, RUN to idle) | 4.14 ms | 4.36 ms |
+| Longest sampled frame, pan and zoom / crawl / fly-in | 9.2 / 4.7 / 3.2 ms | 10.2 / 6.2 / 3.4 ms |
+
+Every access now goes through a lookup and an update state, so a cache hit costs a few clocks more; textured spans (LRMM reads and writes) feel it most. All the demos stay well inside their frame budgets (the crawl, the slowest relative change, draws a frame every 2.9 fields).
+
+The alignment effect seen with the old 4-line cache in GRAPHIC 7 (copies where SX - DX = 3 or 4 mod 8 took up to 1.6 times as long) is gone. With a VRAM slot model of the display and sprites, HMMM 248x64 in GRAPHIC 7 for SX = 0 to 7 now takes 2.48 to 2.90 ms (1.88 to 3.02 ms before), and LMMM + TIMP 4.08 to 4.51 ms (3.18 to 5.23 ms): the worst case is better, the aligned case is slower. In GRAPHIC 4, and with VRAM always ready, copies and LINE are 10 to 36% slower (HMMV is unchanged).
+
+**Read latency of the VDP ports:** in the whole-cartridge bench the slowest VDP read went from 350 ns to 417 ns after /RD, most likely because the CPU's VRAM accesses now queue behind the command engine in the shared cache (not traced further). The lockstep run gives the same latency with and without geo3d, and it is still inside the 503 ns a Z80 at 3.58 MHz allows. geo3d's own reads are unchanged (140 ns).
+
+**openMSX:** the fork (`geo3d` branch) models the old cache (4 lines, round robin, one clock per hit). To the extent that it matched the old RTL, it is now optimistic by about 20 to 35% for high-speed commands with fast VRAM, and pessimistic for the misaligned GRAPHIC 7 copies. buppu3's upstream has not changed its cache model since 88132d2. Bringing it up to date means 8 lines with LRU ages, the per-access cost of the new state machine, no clearing at command start, the write-back at command end and on CPU idle, and CPU VRAM accesses sharing the cache.
+
+**Still open:** the delivered bitstream `geo3d_cartridge_86361d8.fs` in the delivery folder is the 86361d8 build; `cartridge_report.pt.pdf` predates this section.

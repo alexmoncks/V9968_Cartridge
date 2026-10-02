@@ -73,6 +73,13 @@ module tb ();
 	logic	[7:0]		cache_vram_wdata;
 	wire	[7:0]		cache_vram_rdata;
 	wire				cache_vram_rdata_en;
+	logic	[17:0]		cpu_vram_address;
+	logic				cpu_vram_valid;
+	wire				cpu_vram_ready;
+	logic				cpu_vram_write;
+	logic	[7:0]		cpu_vram_wdata;
+	wire	[7:0]		cpu_vram_rdata;
+	wire				cpu_vram_rdata_en;
 	
 	// VRAM interface
 	wire	[17:0]		command_vram_address;
@@ -119,6 +126,13 @@ module tb ();
 		.cache_vram_wdata			( cache_vram_wdata			),
 		.cache_vram_rdata			( cache_vram_rdata			),
 		.cache_vram_rdata_en		( cache_vram_rdata_en		),
+		.cpu_vram_address			( cpu_vram_address			),
+		.cpu_vram_valid			( cpu_vram_valid			),
+		.cpu_vram_ready			( cpu_vram_ready			),
+		.cpu_vram_write			( cpu_vram_write			),
+		.cpu_vram_wdata			( cpu_vram_wdata			),
+		.cpu_vram_rdata			( cpu_vram_rdata			),
+		.cpu_vram_rdata_en		( cpu_vram_rdata_en		),
 		// VRAM interface
 		.command_vram_address		( command_vram_address		),
 		.command_vram_valid			( command_vram_valid		),
@@ -264,6 +278,10 @@ module tb ();
 			cache_vram_valid	= 1'b0;
 			cache_vram_write	= 1'b0;
 			cache_vram_wdata	= 8'd0;
+			cpu_vram_address	= 18'd0;
+			cpu_vram_valid		= 1'b0;
+			cpu_vram_write		= 1'b0;
+			cpu_vram_wdata		= 8'd0;
 			wait_clocks( 10 );
 			reset_n = 1'b1;
 			wait_clocks( 2 );
@@ -548,13 +566,13 @@ module tb ();
 	endtask
 
 	// --------------------------------------------------------------------
-	//	Test case: 4way full test
+	//	Test case: 8way full test
 	// --------------------------------------------------------------------
-	task test_4way_full();
+	task test_8way_full();
 		logic [7:0] read_data;
 		logic [7:0] expected_data;
 		begin
-			$display( "\n=== Test Case: 4way Full Test ===" );
+			$display( "\n=== Test Case: 8way Full Test ===" );
 
 			flush_cache();
 			init_vram();
@@ -806,7 +824,7 @@ module tb ();
 				$error( "VRAM read test failed. Expected: 0x%02X, Got: 0x%02X", expected_data, read_data );
 				$finish;
 			end
-			assert( last_vram_write_count == 1 );
+			assert( last_vram_write_count == 0 );
 			assert( last_vram_read_count == 9 );
 
 			cache_read( 18'h08024, read_data );
@@ -815,7 +833,7 @@ module tb ();
 				$error( "VRAM read test failed. Expected: 0x%02X, Got: 0x%02X", expected_data, read_data );
 				$finish;
 			end
-			assert( last_vram_write_count == 2 );
+			assert( last_vram_write_count == 0 );
 			assert( last_vram_read_count == 10 );
 
 			cache_read( 18'h08028, read_data );
@@ -824,7 +842,7 @@ module tb ();
 				$error( "VRAM read test failed. Expected: 0x%02X, Got: 0x%02X", expected_data, read_data );
 				$finish;
 			end
-			assert( last_vram_write_count == 3 );
+			assert( last_vram_write_count == 0 );
 			assert( last_vram_read_count == 11 );
 
 			cache_read( 18'h0802C, read_data );
@@ -833,7 +851,7 @@ module tb ();
 				$error( "VRAM read test failed. Expected: 0x%02X, Got: 0x%02X", expected_data, read_data );
 				$finish;
 			end
-			assert( last_vram_write_count == 4 );
+			assert( last_vram_write_count == 0 );
 			assert( last_vram_read_count == 12 );
 		end
 	endtask
@@ -1149,6 +1167,139 @@ module tb ();
 	endtask
 
 	// --------------------------------------------------------------------
+	//	Shared CPU access and 8-way replacement
+	// --------------------------------------------------------------------
+	task cpu_write;
+		input [17:0] address;
+		input [7:0] data;
+		begin
+			cpu_vram_address <= address;
+			cpu_vram_wdata <= data;
+			cpu_vram_write <= 1'b1;
+			cpu_vram_valid <= 1'b1;
+			wait_clocks( 1 );
+			timeout_counter = 200;
+			while( !cpu_vram_ready && timeout_counter > 0 ) begin
+				wait_clocks( 1 );
+				timeout_counter = timeout_counter - 1;
+			end
+			if( timeout_counter == 0 ) $fatal( 1, "CPU write timeout" );
+			cpu_vram_valid <= 1'b0;
+			cpu_vram_write <= 1'b0;
+		end
+	endtask
+
+	task cpu_read;
+		input [17:0] address;
+		output [7:0] data;
+		begin
+			cpu_vram_address <= address;
+			cpu_vram_write <= 1'b0;
+			cpu_vram_valid <= 1'b1;
+			wait_clocks( 1 );
+			timeout_counter = 200;
+			while( !cpu_vram_ready && timeout_counter > 0 ) begin
+				wait_clocks( 1 );
+				timeout_counter = timeout_counter - 1;
+			end
+			if( timeout_counter == 0 ) $fatal( 1, "CPU read timeout" );
+			cpu_vram_valid <= 1'b0;
+			timeout_counter = 200;
+			while( !cpu_vram_rdata_en && timeout_counter > 0 ) begin
+				wait_clocks( 1 );
+				timeout_counter = timeout_counter - 1;
+			end
+			if( timeout_counter == 0 ) $fatal( 1, "CPU read data timeout" );
+			data = cpu_vram_rdata;
+		end
+	endtask
+
+	task test_8way_lru;
+		logic [7:0] read_data;
+		integer entry;
+		begin
+			$display( "\n=== Test Case: 8-way LRU ===" );
+			prepare_new_test();
+			last_vram_write_count = 0;
+			last_vram_read_count = 0;
+			for( entry = 0; entry < 8; entry = entry + 1 ) begin
+				cache_write( 18'h12000 + entry*4, 8'h60 + entry );
+			end
+			cache_read( 18'h12000, read_data );
+			cache_write( 18'h12020, 8'h68 );
+			wait_clocks( 12 );
+			if( last_vram_write_count != 1 || vram_memory[18'h12004 >> 2][7:0] != 8'h61 )
+				$fatal( 1, "LRU did not evict the least recently used line" );
+			cache_read( 18'h12000, read_data );
+			if( read_data != 8'h60 || last_vram_read_count != 0 )
+				$fatal( 1, "Recently used line was evicted" );
+			cache_read( 18'h12004, read_data );
+			if( read_data != 8'h61 || last_vram_read_count != 1 )
+				$fatal( 1, "Evicted line did not reload correctly" );
+			$display( "8-way LRU test PASSED" );
+		end
+	endtask
+
+	task test_cpu_shared_cache;
+		logic [7:0] read_data;
+		logic [7:0] expected_byte;
+		begin
+			$display( "\n=== Test Case: Shared CPU Access ===" );
+			prepare_new_test();
+			expected_byte = vram_memory[18'h13000 >> 2][15:8];
+			cache_write( 18'h13000, 8'hA5 );
+			cpu_read( 18'h13001, read_data );
+			if( read_data != expected_byte )
+				$fatal( 1, "CPU partial-line read: expected %02h, got %02h", expected_byte, read_data );
+			cpu_read( 18'h13000, read_data );
+			if( read_data != 8'hA5 ) $fatal( 1, "CPU did not see command write" );
+			cpu_write( 18'h13001, 8'hB6 );
+			cache_read( 18'h13001, read_data );
+			if( read_data != 8'hB6 ) $fatal( 1, "Command did not see CPU write" );
+
+			cpu_vram_address <= 18'h14000;
+			cpu_vram_wdata <= 8'hC7;
+			cpu_vram_write <= 1'b1;
+			cpu_vram_valid <= 1'b1;
+			cache_vram_address <= 18'h14000;
+			cache_vram_wdata <= 8'hD8;
+			cache_vram_write <= 1'b1;
+			cache_vram_valid <= 1'b1;
+			wait_clocks( 1 );
+			if( !cpu_vram_ready || cache_vram_ready ) $fatal( 1, "CPU priority was not respected" );
+			cpu_vram_valid <= 1'b0;
+			cpu_vram_write <= 1'b0;
+			timeout_counter = 200;
+			while( !cache_vram_ready && timeout_counter > 0 ) begin
+				wait_clocks( 1 );
+				timeout_counter = timeout_counter - 1;
+			end
+			if( timeout_counter == 0 ) $fatal( 1, "Command was not serviced after CPU" );
+			cache_vram_valid <= 1'b0;
+			cache_vram_write <= 1'b0;
+			cache_read( 18'h14000, read_data );
+			if( read_data != 8'hD8 ) $fatal( 1, "Shared write order was incorrect" );
+			$display( "Shared CPU access test PASSED" );
+		end
+	endtask
+
+	task test_cpu_idle_flush;
+		begin
+			$display( "\n=== Test Case: CPU Idle Flush ===" );
+			prepare_new_test();
+			cpu_write( 18'h15000, 8'hE1 );
+			wait_clocks( 120 );
+			cpu_write( 18'h15000, 8'hE2 );
+			wait_clocks( 150 );
+			if( vram_memory[18'h15000 >> 2][7:0] == 8'hE2 )
+				$fatal( 1, "CPU idle timer was not restarted" );
+			wait_clocks( 140 );
+			if( vram_memory[18'h15000 >> 2][7:0] != 8'hE2 )
+				$fatal( 1, "CPU idle timeout did not flush dirty data" );
+			$display( "CPU idle flush test PASSED" );
+		end
+	endtask
+
 	//	Main test sequence
 	// --------------------------------------------------------------------
 	initial begin
@@ -1159,6 +1310,12 @@ module tb ();
 
 		reset_sequence();
 		wait_clocks( 100 );
+		if( $test$plusargs( "cpu_only" ) ) begin
+			test_cpu_shared_cache();
+			test_cpu_idle_flush();
+			$display( "=== CPU-only tests PASSED ===" );
+			$finish;
+		end
 
 		test_num = 1;
 		test_basic_operations();
@@ -1177,7 +1334,9 @@ module tb ();
 		wait_clocks( 100 );
 
 		test_num = 5;
-		test_4way_full();
+		test_8way_lru();
+		wait_clocks( 100 );
+		test_8way_full();
 		wait_clocks( 100 );
 
 		test_num = 6;
@@ -1197,6 +1356,8 @@ module tb ();
 		wait_clocks( 100 );
 
 		test_num = 10;
+		test_cpu_shared_cache();
+		test_cpu_idle_flush();
 		$display( "\n=== All Tests PASSED ===" );
 		$display( "Test completed successfully at time %t", $time );
 		$finish;
@@ -1206,7 +1367,7 @@ module tb ();
 	//	Timeout watchdog
 	// --------------------------------------------------------------------
 	initial begin
-		#(clk_base * 5000000);   // 5000000 clock timeout
+		#(clk_base * 10000000);
 		$error( "Test timeout!" );
 		assert( 0 );
 		$finish;

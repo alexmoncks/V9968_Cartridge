@@ -362,6 +362,18 @@ module vdp_cpu_interface (
 			ff_register_num		<= ff_register_pointer;
 			ff_1st_byte			<= ff_bus_wdata;
 		end
+		else if( (w_write && ff_port0) || w_read ) begin
+			//	V9938/V9958 abort a half-written port#1 pair on port#0 access or any read
+			ff_2nd_access		<= 1'b0;
+			ff_register_write	<= 1'b0;
+			ff_port3_write		<= 1'b0;
+		end
+		else if( w_write && ff_port2 && !ff_ext_palette_mode && ff_color_palette_phase == 2'd0 ) begin
+			//	The palette 1st byte shares the data latch with port#1 and port#3
+			ff_1st_byte			<= ff_bus_wdata;
+			ff_register_write	<= 1'b0;
+			ff_port3_write		<= 1'b0;
+		end
 		else begin
 			ff_register_write	<= 1'b0;
 			ff_port3_write		<= 1'b0;
@@ -564,7 +576,12 @@ module vdp_cpu_interface (
 				end
 			6'd2:	//	R#2 = [A17][A16][A15][A14][A13][A12][A11][A10]
 				begin
-					ff_pattern_name_table_base <= ff_1st_byte;
+					if( ff_v9958_mode ) begin
+						ff_pattern_name_table_base <= { 1'b0, ff_1st_byte[6:0] };
+					end
+					else begin
+						ff_pattern_name_table_base <= ff_1st_byte;
+					end
 				end
 			6'd3:	//	R#3 = [A13][A12][A11][A10][A9][A8][A7][A6]
 				begin
@@ -572,7 +589,12 @@ module vdp_cpu_interface (
 				end
 			6'd4:	//	R#4 = [N/A][A17][A16][A15][A14][A13][A12][A11]
 				begin
-					ff_pattern_generator_table_base <= ff_1st_byte[6:0];
+					if( ff_v9958_mode ) begin
+						ff_pattern_generator_table_base <= { 1'b0, ff_1st_byte[5:0] };
+					end
+					else begin
+						ff_pattern_generator_table_base <= ff_1st_byte[6:0];
+					end
 				end
 			6'd5:	//	R#5 = [A14][A13][A12][A11][A10][A9][A8][A7]
 				begin
@@ -580,7 +602,12 @@ module vdp_cpu_interface (
 				end
 			6'd6:	//	R#6 = [N/A][A17][A16][A15][A14][A13][A12][A11]
 				begin
-					ff_sprite_pattern_generator_table_base <= ff_1st_byte[6:0];
+					if( ff_v9958_mode ) begin
+						ff_sprite_pattern_generator_table_base <= { 1'b0, ff_1st_byte[5:0] };
+					end
+					else begin
+						ff_sprite_pattern_generator_table_base <= ff_1st_byte[6:0];
+					end
 				end
 			6'd7:	//	R#7 = [BD7][BD6][BD5][BD4][BD3][BD2][BD1][BD0]
 				begin
@@ -601,11 +628,21 @@ module vdp_cpu_interface (
 				end
 			6'd10:	//	R#10 = [N/A][N/A][N/A][N/A][A17][A16][A15][A14]
 				begin
-					ff_color_table_base[17:14] <= ff_1st_byte[3:0];
+					if( ff_v9958_mode ) begin
+						ff_color_table_base[17:14] <= { 1'b0, ff_1st_byte[2:0] };
+					end
+					else begin
+						ff_color_table_base[17:14] <= ff_1st_byte[3:0];
+					end
 				end
 			6'd11:	//	R#11 = [N/A][N/A][N/A][N/A][N/A][A17][A16][A15]
 				begin
-					ff_sprite_attribute_table_base[17:15] <= ff_1st_byte[2:0];
+					if( ff_v9958_mode ) begin
+						ff_sprite_attribute_table_base[17:15] <= { 1'b0, ff_1st_byte[1:0] };
+					end
+					else begin
+						ff_sprite_attribute_table_base[17:15] <= ff_1st_byte[2:0];
+					end
 				end
 			6'd12:	//	R#12 = [T23][T22][T1][T20][BC3][BC2][BC1][BC0]
 				begin
@@ -648,10 +685,18 @@ module vdp_cpu_interface (
 						ff_sprite16_mode <= ff_1st_byte[7];
 					end
 				end
-			8'd21:	//	R#21 = [CEIE][N/A][N/A][N/A][N/A][N/A][N/A][N/A]
+			8'd21:	//	R#21 = [N/A][N/A][N/A][N/A][N/A][N/A][N/A][V58]
 				begin
 					if( !ff_lock_extregs ) begin
 						ff_v9958_mode <= ff_1st_byte[0];
+						if( ff_1st_byte[0] == 1'b1 ) begin
+							//	Change to V9958 compatible mode
+							ff_pattern_name_table_base[17] <= 1'b0;
+							ff_pattern_generator_table_base[17] <= 1'b0;
+							ff_sprite_pattern_generator_table_base[17] <= 1'b0;
+							ff_color_table_base[17] <= 1'b0;
+							ff_sprite_attribute_table_base[17] <= 1'b0;
+						end
 					end
 				end
 			8'd23:	//	R#23 = [DO7][DO6][DO5][DO4][DO3][DO2][DO1][DO0]
@@ -727,14 +772,14 @@ module vdp_cpu_interface (
 			end
 			else begin
 				if( ff_color_palette_phase == 2'd0 ) begin
-					//	P#2 = [0][R][R][R][0][B][B][B]
-					ff_palette_r				<= { ff_bus_wdata[6:4], ff_bus_wdata[6:5] };
-					ff_palette_b				<= { ff_bus_wdata[2:0], ff_bus_wdata[2:1] };
+					//	P#2 = [0][R][R][R][0][B][B][B] (stored in ff_1st_byte)
 					ff_color_palette_phase		<= 2'd1;
 					ff_color_palette_valid		<= 1'b0;
 				end
 				else begin
 					//	P#2 = [0][0][0][0][0][G][G][G]
+					ff_palette_r				<= { ff_1st_byte[6:4], ff_1st_byte[6:5] };
+					ff_palette_b				<= { ff_1st_byte[2:0], ff_1st_byte[2:1] };
 					ff_palette_g				<= { ff_bus_wdata[2:0], ff_bus_wdata[2:1] };
 					ff_color_palette_phase		<= 2'd0;
 					ff_color_palette_valid		<= 1'b1;
@@ -792,8 +837,7 @@ module vdp_cpu_interface (
 				ff_bus_rdata_en	<= 1'b0;
 			end
 			else if( ff_port1 ) begin
-				ff_bus_rdata	<= (ff_status_register_pointer == 4'd0) ?
-					{ ff_frame_interrupt, sprite_overmap, sprite_collision, sprite_overmap_id }: ff_status_register;
+				ff_bus_rdata	<= ff_status_register;
 				ff_bus_rdata_en	<= 1'b1;
 			end
 			else if( ff_port4 ) begin
