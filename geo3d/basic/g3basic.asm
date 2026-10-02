@@ -114,7 +114,8 @@
 ; RG21SAV). 88h: the V9968 interrupts stay off (IE0 = IE1 = 0, R#20 = 01h,
 ; R#21 = 00h), R#15 is left at 0.
 ;
-; Fixed addresses (breakpoints in tests.tcl): 4010h "G3BASIC" id, 4020h
+; Fixed addresses (breakpoints in tests.tcl): 4010h "ROM_ASC8" (the ROM
+; type signature, ../tools/mapper_tag_ascii8.asm), 4018h "G3BASIC" id, 4020h
 ; INIT, 4023h STATEMENT, 4026h H.CLEA, 4029h H.TIMI, 402Dh "not ours" exit.
 ;
 ; Build: build.sh (gen_tables.py, then z80asm -o out/G3BASIC.ROM
@@ -366,9 +367,8 @@ T_DATA:   equ 0x84               ; DATA token
         defw 0                  ; DEVICE
         defw 0                  ; TEXT
         defs 6, 0
-        defb "G3BASIC", 0       ; 4010h: id for the test harness
-        defb VER_MAJ, VER_MIN
-        defs 0x4020 - $, 0
+        defb "ROM_ASC8"         ; 4010h: ROM type signature (MSXgl): ASCII8
+        defb "G3BASIC", 0       ; 4018h: id for the test harness
 
 init:   jp do_init              ; 4020h
 stmt:   jp do_stmt              ; 4023h
@@ -376,6 +376,7 @@ clea:   jp do_clea              ; 4026h: H.CLEA (CALLF)
 timi:   jp do_timi              ; 4029h: H.TIMI (CALLF)
 pass:   scf                     ; 402Ch: STATEMENT, not ours:
         ret                     ; carry set, HL unchanged
+        include "../tools/mapper_tag_ascii8.asm"      ; 402Eh, never run: for mapper guessers
 
 ; ============================================================================
 ; INIT: runs once at boot, with interrupts off, before BASIC starts.

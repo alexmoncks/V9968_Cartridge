@@ -133,7 +133,7 @@ proc pal_now {} {
 
 # ---- the ROM: INIT, STATEMENT, hooks -------------------------------------------
 proc ours {} {
-  expr {[peek 0x4010] == 0x47 && [peek 0x4011] == 0x33 && [peek 0x4012] == 0x42 && [peek 0x4013] == 0x41}
+  expr {[peek 0x4018] == 0x47 && [peek 0x4019] == 0x33 && [peek 0x401A] == 0x42 && [peek 0x401B] == 0x41}
 }
 set ::inits 0
 set ::slot -1
@@ -359,7 +359,7 @@ proc cp {n d} {
       eq "trampoline: FRCINT(1234.7) = 1234 (04D2h)" [h4 [expr {[lindex $d 1] + 256 * [lindex $d 2]}]] 04D2
       check "trampoline: page 1 = the BASIC ROM inside FRCINT" \
         [expr {[llength $::frc_page1] > 0 && [lsearch $::frc_page1 1] < 0}] "this ROM seen in page 1: $::frc_page1"
-      eq "trampoline: page 1 back on this ROM after the call (4010h reads G3B)" [mem [expr {$::usr_f + 2}] 3] 473342
+      eq "trampoline: page 1 back on this ROM after the call (4018h reads G3B)" [mem [expr {$::usr_f + 2}] 3] 473342
     }
     62 {
       set ::usr_armed 0
@@ -960,7 +960,7 @@ debug set_bp [L dt_st] {[ours] && [reg C] == $::P + 7} {
 # ---- trampoline: tests.tcl writes a USR routine into M%() ---------------------------
 #   ld a,<our slot> / ld h,40h / call ENASLT      (page 1 = this ROM)
 #   ld hl,<trampoline> / ld ix,FRCINT / call L1 / ld (F),hl
-#   ld a,(4010h) / ld (F+2),a  ... 4011h, 4012h   (what page 1 holds now)
+#   ld a,(4018h) / ld (F+2),a  ... 4019h, 401Ah   (what page 1 holds now)
 #   ld a,(EXPTBL) / ld h,40h / call ENASLT / ei   (page 1 = BASIC again)
 #   ld hl,(F) / ld (DAC+2),hl / ld a,2 / ld (VALTYP),a / ret / L1: jp (hl)
 # A breakpoint on FRCINT (2F8Ah) notes whether page 1 held this ROM there.
@@ -980,7 +980,7 @@ proc cp_usr {d} {
     0x21 [lo $t] [hi $t] 0xDD 0x21 0x8A 0x2F 0xCD [lo $l1] [hi $l1] 0x22 [lo $f] [hi $f]]
   for {set i 0} {$i < 3} {incr i} {
     set x [expr {$f + 2 + $i}]
-    lappend code 0x3A [expr {0x10 + $i}] 0x40 0x32 [lo $x] [hi $x]
+    lappend code 0x3A [expr {0x18 + $i}] 0x40 0x32 [lo $x] [hi $x]
   }
   lappend code 0x3A 0xC1 0xFC 0x26 0x40 0xCD 0x24 0x00 0xFB \
     0x2A [lo $f] [hi $f] 0x22 0xF8 0xF7 0x3E 0x02 0x32 0x63 0xF6 0xC9 0xE9

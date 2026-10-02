@@ -1,0 +1,4 @@
+# MSX-BASIC loads ASCII programs only with CRLF line ends ("Direct statement
+# in file" otherwise): the BASIC test disks are checked out as CRLF everywhere
+basic/disk/*.BAS text eol=crlf
+basic/disk_auto/*.BAS text eol=crlf

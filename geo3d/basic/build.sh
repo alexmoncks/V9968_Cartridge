@@ -7,7 +7,9 @@
 # file out/g3basic.lbl, from g3basic.asm (bank 0), g3bank1.asm (bank 1) and
 # out/g3tab.asm (bank 2, the sine table: gen_tables.py). Fails loudly on
 # assembler errors, on a wrong size, on a bank 0 or 1 over 8 KB and on an
-# "AB" header anywhere but at offset 0.
+# "AB" header anywhere but at offset 0, and unless a launcher that reads
+# the ROM type signature or guesses the mapper as openMSX does finds ASCII8
+# (../tools/mapper_tag_ascii8.asm, ../tools/mapper_guess.py).
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p out
@@ -59,4 +61,11 @@ for bank in 1 2 3 4 5 6 7; do
     exit 1
   fi
 done
+# the mapper tag: "ROM_ASC8" at 4010h, and openMSX's LD (nnnn),A count (with no
+# -romtype) gives ASCII8 with a lead of 16 or more
+if ! python3 ../tools/mapper_guess.py --expect ASCII8 --margin 16 out/G3BASIC.ROM > out/mapper.txt; then
+  cat out/mapper.txt
+  echo "build.sh: the ROM does not read as ASCII8 to a mapper guesser"
+  exit 1
+fi
 echo "build.sh: out/G3BASIC.ROM, 65536 bytes, bank 0 uses $used of 8192 bytes, bank 1 $used1"

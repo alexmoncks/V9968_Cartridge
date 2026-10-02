@@ -33,3 +33,8 @@ z80/GEO3D.COM
 z80/GEO3DF.COM
 basic/out/
 game/out/
+game/music/
+game/*.mod
+game/*.mid
+game/*.midi
+rom/rom_ports.asm

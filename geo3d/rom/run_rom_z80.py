@@ -201,8 +201,9 @@ m.set_memory_block(0x002D, bytes([opt.msxver]))         # MSXVER
 m.set_memory_block(0xFFE8, bytes([0x02 if opt.pal else 0x00]))     # RG9SAV: NT (50 / 60 Hz)
 m.set_memory_block(0xFCC1, bytes([0x00, 0x00, 0x00, 0x00, 0x00]))
 m.sp = 0xF37D
-m.pc = 0x4010                                           # INIT from the header
-assert rom[0:2] == b"AB" and rom[2] | rom[3] << 8 == 0x4010
+assert rom[0:2] == b"AB" and rom[0x10:0x18] == b"ROM_AS16"         # the header, the mapper tag
+m.pc = rom[2] | rom[3] << 8                             # INIT from the header
+assert 0x4018 <= m.pc < 0x4200, hex(m.pc)
 
 st = {"r15": 0, "pend": None, "s0": 0, "geo": 0, "flips": 0, "inits": 0,
       "page2": None, "idx": None, "row": 0, "tick": 0, "blanks": 0, "fdemo": 0, "psg_reg": 0,
