@@ -462,6 +462,49 @@ double buffered, 128 precomputed matrices forming one full turn (frame 128 equal
 frame 0, so the spin loops forever without a jump); the Z80 does no arithmetic.
 Regenerate the table with a different motion in `z80/gen_tables.py`.
 
+## ROM format / mapper
+
+Every ROM built here is a plain MegaROM with a standard mapper and nothing
+else on the cartridge: the demo ROM (`GEO3D_98.ROM`, and `GEO3D.ROM` for 88h)
+and VECTOR RAID (`VECTOR_RAID_98.ROM`, `VECTOR_RAID_88.ROM`, their `_TIMING`
+and `_PAL9` builds, and the 64 KB `GEO3D_SHOOTER_*.ROM`) are **ASCII16**;
+`G3BASIC.ROM` is **ASCII8**. Their compressed data can fool a mapper guess:
+bytes that happen to read as `LD (9000h),A` made a launcher, and openMSX
+without `-romtype`, take the demo ROM for Konami SCC (and VECTOR RAID for
+Konami), and the player then switched banks through the wrong registers.
+So bank 0 of every ROM carries a mapper tag (`tools/mapper_tag_ascii16.asm`,
+`tools/mapper_tag_ascii8.asm`), none of which ever runs:
+
+- File offset 0010h (4010h, right after the 16-byte "AB" header, whose INIT,
+  STATEMENT, DEVICE and TEXT are unchanged): the 8-byte ROM type signature
+  `ROM_AS16` (ASCII16) or `ROM_ASC8` (ASCII8), with no terminator, as in
+  MSXgl's [ROM type signature](https://aoineko.org/msxgl/index.php?title=ROM_type_signature)
+  1.0. openMSX reads its `ASCII16X`, `ROM_NEO8` and `ROM_NE16` at the same
+  place. Compare all 8 bytes: `ASCII16X` is another mapper.
+- Then the same in words, 0-terminated, for anyone with a hex dump
+  ("ASCII16 MegaROM, mapper ASCII16 (16 KB banks, registers 6000h and
+  7000h). geo3d"). In `G3BASIC.ROM` it follows the fixed entry points at
+  402Eh, and 4018h holds the "G3BASIC" id.
+- Then 40 `LD (nnnn),A` to the mapper's own registers (ASCII16: 6000h, 7000h
+  and 77FFh; ASCII8: 6000h, 6800h, 7000h and 7800h), so a guess that counts
+  them the way openMSX's `guessRomType` does lands on the right mapper with a
+  lead of 24 points or more.
+
+`tools/mapper_guess.py ROM...` prints the signature, those counts and the
+guess; every build runs it and fails if the guess would be wrong. Launchers
+and emulators should read the signature, or simply use the mapper type:
+`-romtype ASCII16` in openMSX (`-romtype ASCII8` for `G3BASIC.ROM`), and
+ASCII16 / ASCII8 in a flash cartridge's loader. openMSX now picks the right
+type without `-romtype` as well.
+
+## geo3d in other V9968 designs
+
+[docs/integration_msximus_z.md](docs/integration_msximus_z.md): Albert's
+(Papipapito, MSXimus project) notes on adding geo3d to the MSXimus Z, an
+MSX2+ on a Zynq XC7Z020 whose VDP is HRA!'s V9968: ports, bus wiring, clock,
+cost and timing, verification and results on the board. Reproduced with his
+permission (MIT).
+
 ## Layout
 - rtl/geo3d_core.v    compute core
 - rtl/geo3d_z80if.v   Z80 interface (synthesis top)
@@ -487,9 +530,9 @@ Regenerate the table with a different motion in `z80/gen_tables.py`.
 - integration/        generator of the cartridge project with geo3d (fpga/V9968_Cartridge_TangNano20K_geo3d)
 - syn/gowin/          Gowin EDA build script (builds that project in place, checks every timing path)
 - basic/              MSX-BASIC CALL extension ROM and its openMSX tests
-- tools/              GLB/glTF to geo3d model converter and BASIC viewer generator
+- tools/              GLB/glTF to geo3d model converter, BASIC viewer generator, ROM mapper tag and mapper guess check
 - game/               VECTOR RAID shooter cartridge: sources, asset tools, tests, release ROMs
-- docs/               BASIC API spec, cartridge verification report (EN, PT, JA)
+- docs/               BASIC API spec, cartridge verification report (EN, PT, JA), MSXimus Z integration notes
 - run_all.sh          reproduces everything (iverilog, python3, z80asm, pip: yowasp-yosys, yowasp-nextpnr-himbaechel-gowin, z80)
 
 Source comments are in Portuguese; English translation will follow.

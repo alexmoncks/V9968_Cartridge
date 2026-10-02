@@ -21,6 +21,12 @@ decoded traffic becomes the stream; the showcase scenes come straight from
 showcase/showcase.py. Writes rom/out/GEO3D.ROM and rom/out/streams.json (the
 expected traffic per demo, used by run_rom_z80.py).
 
+Bank 0 starts with the mapper tag (geo3d_rom.asm, ../tools/mapper_tag_ascii16.asm):
+"ROM_AS16" at 4010h, the ROM type signature, then LD (nnnn),A to ASCII16
+registers that never run. The build fails unless a launcher that reads the
+signature or guesses the mapper as openMSX does finds ASCII16
+(../tools/mapper_guess.py).
+
 The streams are compressed (g3lz.py): each one is cut into blocks of at most
 8 KB of whole ops (the player's decode buffer), NEXTBLOCK closing each block
 but the last, and each block is compressed on its own. A loop body starts a
@@ -97,8 +103,10 @@ Z80 = os.path.join(ROOT, "z80")
 OUT = os.path.join(HERE, "out")
 sys.path.insert(0, os.path.join(ROOT, "showcase"))
 sys.path.insert(0, Z80)
+sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import g3lz  # noqa: E402
+import mapper_guess  # noqa: E402
 import modcost  # noqa: E402
 import modplay  # noqa: E402
 import music  # noqa: E402
@@ -1038,6 +1046,10 @@ def main():
         assert player_view(rom, bank, addr) == want, name
     if song:
         mod_check(rom, song)
+    # the mapper tag: what a launcher with no -romtype finds (ASCII16, with a lead)
+    ok, tag = mapper_guess.report(rom, rom_name, "ASCII16", 16)
+    assert ok, "\n".join(tag)
+    print(f"mapper: {tag[1].strip()}; {tag[-2].strip()}")
     open(os.path.join(OUT, rom_name), "wb").write(rom)
     json.dump({"demos": [d[0] for d in demos], "expect": expect, "table": table,
                "langs": [lang for lang, _ in LANGS], "tables": tables,

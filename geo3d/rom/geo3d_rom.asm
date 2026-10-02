@@ -205,6 +205,8 @@ DZ_AHEAD:   equ 259             ; dz_need before each op: an op is at most
         dw init
         dw 0, 0, 0
         ds 6, 0
+        db "ROM_AS16"                   ; 4010h: ROM type signature (MSXgl): ASCII16
+        include "../tools/mapper_tag_ascii16.asm"     ; never run: for mapper guessers
 
 ; ----------------------------------------------------------------------------
 init:
