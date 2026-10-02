@@ -70,7 +70,7 @@ Las tapas de las letras llevan textura: cada línea de una cara se convierte en 
 comando LRMM que copia texels de una textura guardada en la VRAM, con el paso por
 píxel calculado por geo3d. La textura se guarda en 7 copias ya sombreadas, y el
 nivel de luz elige la copia. Son unos 405 spans LRMM y 623 LINE por cuadro; el
-cuadro más largo, desde RUN hasta el último píxel, tarda 4,1 ms, un cuarto de un
+cuadro más largo, desde RUN hasta el último píxel, tarda 4,4 ms, un cuarto de un
 campo de 60 Hz (16,7 ms), medido en la simulación del RTL (`sim/tb_system.v`) con
 los comandos rápidos del V9968.
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Alex Moncks
 `timescale 1ns/1ps
-// Harness around HRA!'s original V9968 command engine (vdp_command.v, with its
-// internal cache), used as the golden reference for LINE and LRMM.
+// Harness around HRA!'s original V9968 command engine (vdp_command.v and its
+// cache, vdp_command_cache.v, wired as vdp.v wires them since his 88132d2),
+// used as the golden reference for LINE and LRMM.
 //
 // VRAM: 256 KB, 32-bit words, byte lanes little-endian (as vdp_command_cache
 // expects). SCREEN 5 (GRAPHIC4) layout: byte = y*128 + x/2, even x in the
@@ -33,11 +34,15 @@ module tb_hra_cmd;
     reg         hs;
     reg         v256;
 
+    wire [17:0] ca;                   // engine <-> shared cache (vdp.v since 88132d2)
+    wire        cv, cr, cw, crde, cfs, cfe;
+    wire [7:0]  cwd, crd;
+
     vdp_command dut (
         .reset_n(reset_n), .clk(clk),
-        .command_vram_address(a), .command_vram_valid(v), .command_vram_ready(1'b1),
-        .command_vram_write(w), .command_vram_wdata(wd), .command_vram_wdata_mask(wm),
-        .command_vram_rdata(rd), .command_vram_rdata_en(rde),
+        .cache_vram_address(ca), .cache_vram_valid(cv), .cache_vram_ready(cr),
+        .cache_vram_write(cw), .cache_vram_wdata(cwd), .cache_vram_rdata(crd),
+        .cache_vram_rdata_en(crde), .cache_flush_start(cfs), .cache_flush_end(cfe),
         .register_write(rw), .register_num(rn), .register_data(rdat),
         .clear_border_detect(1'b0), .read_color(1'b0),
         .status_command_execute(ce), .status_border_detect(), .status_transfer_ready(),
@@ -47,6 +52,20 @@ module tb_hra_cmd;
         .reg_command_enable(1'b1), .reg_command_high_speed_mode(hs),
         .reg_ext_command_mode(1'b1), .reg_vram256k_mode(v256),
         .vram_access_mask(), .intr_command_end()
+    );
+
+    // HRA!'s shared VRAM cache, wired as in vdp.v (88132d2 and later); the CPU
+    // port is idle here (start is tied to 0 in vdp.v as well)
+    vdp_command_cache u_cache (
+        .reset_n(reset_n), .clk(clk), .start(1'b0),
+        .cache_vram_address(ca), .cache_vram_valid(cv), .cache_vram_ready(cr),
+        .cache_vram_write(cw), .cache_vram_wdata(cwd), .cache_vram_rdata(crd),
+        .cache_vram_rdata_en(crde), .cache_flush_start(cfs), .cache_flush_end(cfe),
+        .cpu_vram_address(18'd0), .cpu_vram_valid(1'b0), .cpu_vram_ready(),
+        .cpu_vram_write(1'b0), .cpu_vram_wdata(8'd0), .cpu_vram_rdata(), .cpu_vram_rdata_en(),
+        .command_vram_address(a), .command_vram_valid(v), .command_vram_ready(1'b1),
+        .command_vram_write(w), .command_vram_wdata(wd), .command_vram_wdata_mask(wm),
+        .command_vram_rdata(rd), .command_vram_rdata_en(rde)
     );
 
     reg [31:0] mem [0:65535];

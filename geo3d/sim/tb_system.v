@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Alex Moncks
 `timescale 1ns/1ps
 // End-to-end testbench: geo3d_bus (engine at 42.95 MHz, bus at 85.9 MHz)
-// drives HRA!'s original V9968 command engine (vdp_command.v, unmodified),
+// drives HRA!'s original V9968 command engine (vdp_command.v and
+// vdp_command_cache.v, unmodified, wired as in vdp.v since his 88132d2),
 // which draws into a 256 KB VRAM model. The stimulus is the captured traffic
 // of the real Z80 program (run_demo_z80.py): geo3d port writes, the Z80's own
 // VDP commands (page clear), texture upload, page flips.
@@ -47,12 +48,16 @@ module tb_system;
     reg  [31:0] rd;
     reg         rde;
 
+    wire [17:0] ca;                   // engine <-> shared cache (vdp.v since 88132d2)
+    wire        cv, cr, cw, crde, cfs, cfe;
+    wire [7:0]  cwd, crd;
+
     // same hookup as the patched vdp.v: external port OR-ed in
     vdp_command u_cmd (
         .reset_n(~rst), .clk(clk),
-        .command_vram_address(a), .command_vram_valid(v), .command_vram_ready(1'b1),
-        .command_vram_write(w), .command_vram_wdata(wd), .command_vram_wdata_mask(wm),
-        .command_vram_rdata(rd), .command_vram_rdata_en(rde),
+        .cache_vram_address(ca), .cache_vram_valid(cv), .cache_vram_ready(cr),
+        .cache_vram_write(cw), .cache_vram_wdata(cwd), .cache_vram_rdata(crd),
+        .cache_vram_rdata_en(crde), .cache_flush_start(cfs), .cache_flush_end(cfe),
         .register_write(z_wr | g_wr), .register_num(g_wr ? g_num : z_num),
         .register_data(g_wr ? g_data : z_data),
         .clear_border_detect(1'b0), .read_color(1'b0),
@@ -62,6 +67,20 @@ module tb_system;
         .reg_command_enable(1'b1), .reg_command_high_speed_mode(1'b1),
         .reg_ext_command_mode(1'b1), .reg_vram256k_mode(1'b1),
         .vram_access_mask(), .intr_command_end()
+    );
+
+    // HRA!'s shared VRAM cache, wired as in vdp.v (88132d2 and later); the CPU
+    // port is idle here (start is tied to 0 in vdp.v as well)
+    vdp_command_cache u_cache (
+        .reset_n(~rst), .clk(clk), .start(1'b0),
+        .cache_vram_address(ca), .cache_vram_valid(cv), .cache_vram_ready(cr),
+        .cache_vram_write(cw), .cache_vram_wdata(cwd), .cache_vram_rdata(crd),
+        .cache_vram_rdata_en(crde), .cache_flush_start(cfs), .cache_flush_end(cfe),
+        .cpu_vram_address(18'd0), .cpu_vram_valid(1'b0), .cpu_vram_ready(),
+        .cpu_vram_write(1'b0), .cpu_vram_wdata(8'd0), .cpu_vram_rdata(), .cpu_vram_rdata_en(),
+        .command_vram_address(a), .command_vram_valid(v), .command_vram_ready(1'b1),
+        .command_vram_write(w), .command_vram_wdata(wd), .command_vram_wdata_mask(wm),
+        .command_vram_rdata(rd), .command_vram_rdata_en(rde)
     );
 
     reg [31:0] mem [0:65535];
