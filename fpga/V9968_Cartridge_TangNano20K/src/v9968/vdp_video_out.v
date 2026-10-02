@@ -311,7 +311,7 @@ module vdp_video_out (
 			ff_coeff	<= 8'd0;
 		end
 		else if( w_enable ) begin
-			ff_coeff	<= w_normalized_numerator[14:7];					//	0 ... 63
+			ff_coeff	<= w_normalized_numerator[12:5];					//	0 ... 255
 		end
 	end
 

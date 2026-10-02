@@ -158,7 +158,8 @@ module vdp_timing_control_ssg (
 			ff_horizontal_offset_l <= 3'd0;
 			ff_horizontal_offset_h <= 6'd0;
 		end
-		else if( ff_v_count[0] && w_h_count_end ) begin
+		else if( (w_screen_pos_x[13:4] - { 7'd0, reg_horizontal_offset_l }) == 10'h3FF &&
+				  w_screen_pos_x[3:0] == 4'hF ) begin
 			ff_horizontal_offset_l <= reg_horizontal_offset_l;
 			ff_horizontal_offset_h <= reg_horizontal_offset_h;
 		end

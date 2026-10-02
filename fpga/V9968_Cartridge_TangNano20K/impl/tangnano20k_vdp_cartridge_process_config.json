@@ -72,7 +72,7 @@
     "Ram_RW_Check": true,
     "Replicate_Resources": false,
     "Report_Auto-Placed_Io_Information": false,
-    "Route_Maxfan": 100,
+    "Route_Maxfan": 50,
     "Route_Option": "1",
     "Run_Timing_Driven": true,
     "SECURE_MODE": false,

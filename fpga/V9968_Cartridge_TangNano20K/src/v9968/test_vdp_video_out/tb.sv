@@ -83,6 +83,7 @@ module tb ();
 	//	Loop variables
 	// --------------------------------------------------------------------
 	integer				i, j, jj;
+	integer				coefficient_checks = 0;
 
 	// --------------------------------------------------------------------
 	//	DUT
@@ -96,6 +97,7 @@ module tb ();
 		.vdp_r				( vdp_r				),
 		.vdp_g				( vdp_g				),
 		.vdp_b				( vdp_b				),
+		.field				( 1'b0				),
 		.display_hs			( display_hs		),
 		.display_vs			( display_vs		),
 		.display_en			( display_en		),
@@ -103,7 +105,10 @@ module tb ();
 		.display_g			( display_g			),
 		.display_b			( display_b			),
 		.reg_denominator	( reg_denominator	),
-		.reg_normalize		( reg_normalize		)
+		.reg_normalize		( reg_normalize		),
+		.reg_interlace_mode	( 1'b0				),
+		.reg_flat_interlace_mode ( 1'b0			),
+		.reg_50hz_mode		( 1'b0				)
 	);
 
 	// --------------------------------------------------------------------
@@ -111,6 +116,16 @@ module tb ();
 	// --------------------------------------------------------------------
 	always #(clk_base/2) begin
 		clk <= ~clk;
+	end
+
+	always @( posedge clk ) begin
+		if( reset_n && u_video_out.ff_active && h_count[0] && u_video_out.ff_numerator == 8'd96 ) begin
+			#1;
+			if( u_video_out.ff_coeff !== 8'd123 ) begin
+				$fatal( 1, "Horizontal interpolation coefficient: expected 123, got %d", u_video_out.ff_coeff );
+			end
+			coefficient_checks = coefficient_checks + 1;
+		end
 	end
 
 	// --------------------------------------------------------------------
@@ -174,6 +189,7 @@ module tb ();
 		end
 
 		$display( "[test---] Finished" );
+		if( coefficient_checks == 0 ) $fatal( 1, "Horizontal interpolation coefficient was not exercised" );
 		repeat( 10 ) @( posedge clk );
 		$finish;
 	end

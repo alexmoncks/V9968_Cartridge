@@ -591,3 +591,113 @@ module tb ();
 //	end
 
 endmodule
+
+module tb_collision_once_per_line ();
+	reg clk;
+	reg reset_n;
+	reg [13:0] screen_pos_x;
+	reg [3:0] makeup_plane;
+	reg color_plane_x_en;
+	reg pattern_left_en;
+	reg clear_sprite_collision;
+	wire sprite_collision;
+	integer scan_clock;
+
+	vdp_sprite_makeup_pixel u_dut (
+		.reset_n(reset_n),
+		.clk(clk),
+		.screen_pos_x(screen_pos_x),
+		.pixel_pos_y(8'd40),
+		.screen_v_active(1'b1),
+		.sprite_mode2(1'b1),
+		.reg_display_on(1'b1),
+		.reg_color0_opaque(1'b1),
+		.reg_sprite_magify(1'b0),
+		.reg_ext_palette_mode(1'b0),
+		.reg_sprite_16x16(1'b0),
+		.reg_sprite_mode3(1'b0),
+		.selected_count(5'd2),
+		.makeup_plane(makeup_plane),
+		.plane_x(10'd232),
+		.color(8'h05),
+		.palette_set(4'd0),
+		.info_mgx(8'd0),
+		.color_plane_x_en(color_plane_x_en),
+		.pattern(32'hFFFFFFFF),
+		.pattern_left_en(pattern_left_en),
+		.pattern_right_en(1'b0),
+		.x(),
+		.mgx(),
+		.sample_x(7'd0),
+		.display_color(),
+		.display_color_transparent(),
+		.display_color_en(),
+		.clear_sprite_collision(clear_sprite_collision),
+		.sprite_collision(sprite_collision),
+		.clear_sprite_collision_xy(1'b0),
+		.sprite_collision_x(),
+		.sprite_collision_y()
+	);
+
+	always #5 clk = ~clk;
+
+	task automatic scan_line;
+		input clear_on_first_collision;
+		reg collision_seen;
+		reg collision_cleared;
+		begin
+			collision_seen = 1'b0;
+			collision_cleared = 1'b0;
+			screen_pos_x = 14'h3FFF;
+			@(posedge clk);
+			#1;
+			for (scan_clock = 0; scan_clock < 16 * 256; scan_clock = scan_clock + 1) begin
+				screen_pos_x = scan_clock;
+				@(posedge clk);
+				#1;
+				if (!collision_seen && sprite_collision) begin
+					collision_seen = 1'b1;
+					if (clear_on_first_collision) clear_sprite_collision = 1'b1;
+				end
+				else if (clear_sprite_collision) begin
+					clear_sprite_collision = 1'b0;
+					collision_cleared = 1'b1;
+				end
+				else if (collision_cleared && sprite_collision) begin
+					$fatal(1, "Collision reasserted in the same line at X=%0d", screen_pos_x[13:4]);
+				end
+			end
+			if (!collision_seen || (clear_on_first_collision && !collision_cleared)) begin
+				$fatal(1, "Expected collision and status clear did not occur");
+			end
+		end
+	endtask
+
+	initial begin
+		clk = 1'b0;
+		reset_n = 1'b0;
+		screen_pos_x = 14'd0;
+		makeup_plane = 4'd0;
+		color_plane_x_en = 1'b0;
+		pattern_left_en = 1'b0;
+		clear_sprite_collision = 1'b0;
+		repeat (4) @(posedge clk);
+		#1;
+		reset_n = 1'b1;
+		color_plane_x_en = 1'b1;
+		pattern_left_en = 1'b1;
+		@(posedge clk);
+		#1;
+		makeup_plane = 4'd1;
+		@(posedge clk);
+		#1;
+		color_plane_x_en = 1'b0;
+		pattern_left_en = 1'b0;
+		scan_line(1'b1);
+		if (sprite_collision !== 1'b0) $fatal(1, "Collision did not clear");
+		scan_line(1'b0);
+		if (sprite_collision !== 1'b1) $fatal(1, "Collision was not detected on the next line");
+		$display("Collision is reported once per line");
+		$finish;
+	end
+endmodule

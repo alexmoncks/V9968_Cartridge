@@ -128,12 +128,22 @@ module vdp (
 	wire		[4:0]	w_palette_b;
 
 	wire		[17:0]	w_cpu_vram_address;
+	wire		[17:0]	w_cpu_cache_address;
 	wire				w_cpu_vram_valid;
     wire                w_cpu_vram_ready;
 	wire				w_cpu_vram_write;
 	wire		[7:0]	w_cpu_vram_wdata;
 	wire		[7:0]	w_cpu_vram_rdata;
 	wire				w_cpu_vram_rdata_en;
+	wire		[17:0]	w_cache_vram_address;
+	wire				w_cache_vram_valid;
+	wire				w_cache_vram_ready;
+	wire				w_cache_vram_write;
+	wire		[7:0]	w_cache_vram_wdata;
+	wire		[7:0]	w_cache_vram_rdata;
+	wire				w_cache_vram_rdata_en;
+	wire				w_cache_flush_start;
+	wire				w_cache_flush_end;
 
 	wire		[17:0]	w_screen_mode_vram_address;
 	wire				w_screen_mode_vram_valid;
@@ -410,14 +420,15 @@ module vdp (
 	vdp_command u_command (
 		.reset_n									( reset_n									),
 		.clk										( clk										),
-		.command_vram_address						( w_command_vram_address					),
-		.command_vram_valid							( w_command_vram_valid						),
-		.command_vram_ready							( w_command_vram_ready						),
-		.command_vram_write							( w_command_vram_write						),
-		.command_vram_wdata							( w_command_vram_wdata						),
-		.command_vram_wdata_mask					( w_command_vram_wdata_mask					),
-		.command_vram_rdata							( w_command_vram_rdata						),
-		.command_vram_rdata_en						( w_command_vram_rdata_en					),
+		.cache_vram_address						( w_cache_vram_address					),
+		.cache_vram_valid							( w_cache_vram_valid					),
+		.cache_vram_ready							( w_cache_vram_ready					),
+		.cache_vram_write							( w_cache_vram_write					),
+		.cache_vram_wdata							( w_cache_vram_wdata					),
+		.cache_vram_rdata							( w_cache_vram_rdata					),
+		.cache_vram_rdata_en						( w_cache_vram_rdata_en					),
+		.cache_flush_start						( w_cache_flush_start					),
+		.cache_flush_end							( w_cache_flush_end					),
 		.register_write								( w_register_write							),
 		.register_num								( w_register_num							),
 		.register_data								( w_register_data							),
@@ -437,6 +448,42 @@ module vdp (
 		.reg_vram256k_mode							( reg_vram256k_mode							),
 		.vram_access_mask							( w_vram_access_mask						),
 		.intr_command_end							( w_intr_command_end						)
+	);
+
+	// --------------------------------------------------------------------
+	//	Shared VRAM cache
+	// --------------------------------------------------------------------
+	assign w_cpu_cache_address = w_vram_interleave ?
+		{ w_cpu_vram_address[17], w_cpu_vram_address[0], w_cpu_vram_address[16:1] } : w_cpu_vram_address;
+
+	vdp_command_cache u_cache (
+		.reset_n                       ( reset_n                     ),
+		.clk                           ( clk                         ),
+		.start                         ( 1'b0                        ),
+		.cache_vram_address            ( w_cache_vram_address        ),
+		.cache_vram_valid              ( w_cache_vram_valid          ),
+		.cache_vram_ready              ( w_cache_vram_ready          ),
+		.cache_vram_write              ( w_cache_vram_write          ),
+		.cache_vram_wdata              ( w_cache_vram_wdata          ),
+		.cache_vram_rdata              ( w_cache_vram_rdata          ),
+		.cache_vram_rdata_en           ( w_cache_vram_rdata_en       ),
+		.cache_flush_start             ( w_cache_flush_start         ),
+		.cache_flush_end               ( w_cache_flush_end           ),
+		.cpu_vram_address              ( w_cpu_cache_address         ),
+		.cpu_vram_valid                ( w_cpu_vram_valid            ),
+		.cpu_vram_ready                ( w_cpu_vram_ready            ),
+		.cpu_vram_write                ( w_cpu_vram_write            ),
+		.cpu_vram_wdata                ( w_cpu_vram_wdata            ),
+		.cpu_vram_rdata                ( w_cpu_vram_rdata            ),
+		.cpu_vram_rdata_en             ( w_cpu_vram_rdata_en         ),
+		.command_vram_address          ( w_command_vram_address      ),
+		.command_vram_valid            ( w_command_vram_valid        ),
+		.command_vram_ready            ( w_command_vram_ready        ),
+		.command_vram_write            ( w_command_vram_write        ),
+		.command_vram_wdata            ( w_command_vram_wdata        ),
+		.command_vram_wdata_mask       ( w_command_vram_wdata_mask   ),
+		.command_vram_rdata            ( w_command_vram_rdata        ),
+		.command_vram_rdata_en         ( w_command_vram_rdata_en     )
 	);
 
 	// --------------------------------------------------------------------
@@ -461,15 +508,15 @@ module vdp (
 		.command_vram_write							( w_command_vram_write						),
 		.command_vram_wdata							( w_command_vram_wdata						),
 		.command_vram_wdata_mask					( w_command_vram_wdata_mask					),
-		.command_vram_rdata							( w_command_vram_rdata						),
+		.command_vram_rdata							( w_command_vram_rdata					),
 		.command_vram_rdata_en						( w_command_vram_rdata_en					),
-		.cpu_vram_address							( w_cpu_vram_address						),
-		.cpu_vram_valid								( w_cpu_vram_valid							),
-		.cpu_vram_ready								( w_cpu_vram_ready							),
-		.cpu_vram_write								( w_cpu_vram_write							),
-		.cpu_vram_wdata								( w_cpu_vram_wdata							),
-		.cpu_vram_rdata								( w_cpu_vram_rdata							),
-		.cpu_vram_rdata_en							( w_cpu_vram_rdata_en						),
+		.cpu_vram_address							( 18'd0										),
+		.cpu_vram_valid								( 1'b0										),
+		.cpu_vram_ready								( 											),
+		.cpu_vram_write								( 1'b0										),
+		.cpu_vram_wdata								( 8'd0										),
+		.cpu_vram_rdata								( 											),
+		.cpu_vram_rdata_en							( 											),
 		.vram_address								( vram_address								),
 		.vram_valid									( vram_valid								),
 		.vram_write									( vram_write								),
