@@ -17,7 +17,7 @@
         "SubInsts": [
             {
                 "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/tangnano20k_vdp_cartridge.v",
-                "InstLine": 151,
+                "InstLine": 152,
                 "InstName": "u_pll",
                 "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/gowin_rpll/gowin_rpll.v",
                 "ModuleLine": 10,
@@ -25,7 +25,7 @@
             },
             {
                 "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/tangnano20k_vdp_cartridge.v",
-                "InstLine": 157,
+                "InstLine": 158,
                 "InstName": "u_pll2",
                 "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/gowin_rpll2/gowin_rpll2.v",
                 "ModuleLine": 10,
@@ -33,7 +33,7 @@
             },
             {
                 "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/tangnano20k_vdp_cartridge.v",
-                "InstLine": 164,
+                "InstLine": 166,
                 "InstName": "u_clkdiv",
                 "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/gowin_clkdiv/gowin_clkdiv.v",
                 "ModuleLine": 10,
@@ -41,7 +41,7 @@
             },
             {
                 "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/tangnano20k_vdp_cartridge.v",
-                "InstLine": 173,
+                "InstLine": 175,
                 "InstName": "u_msx_slot",
                 "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/msx_slot/msx_slot.v",
                 "ModuleLine": 58,
@@ -49,15 +49,43 @@
             },
             {
                 "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/tangnano20k_vdp_cartridge.v",
-                "InstLine": 203,
-                "InstName": "u_v9958",
+                "InstLine": 211,
+                "InstName": "u_geo3d",
+                "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/geo3d/geo3d_bus.v",
+                "ModuleLine": 27,
+                "ModuleName": "geo3d_bus",
+                "SubInsts": [
+                    {
+                        "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/geo3d/geo3d_bus.v",
+                        "InstLine": 121,
+                        "InstName": "u_engine",
+                        "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/geo3d/geo3d_engine.v",
+                        "ModuleLine": 99,
+                        "ModuleName": "geo3d_engine",
+                        "SubInsts": [
+                            {
+                                "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/geo3d/geo3d_engine.v",
+                                "InstLine": 132,
+                                "InstName": "u_core",
+                                "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/geo3d/geo3d_core.v",
+                                "ModuleLine": 39,
+                                "ModuleName": "geo3d_core"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/tangnano20k_vdp_cartridge.v",
+                "InstLine": 239,
+                "InstName": "u_v9968",
                 "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp.v",
                 "ModuleLine": 58,
                 "ModuleName": "vdp",
                 "SubInsts": [
                     {
                         "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp.v",
-                        "InstLine": 241,
+                        "InstLine": 246,
                         "InstName": "u_cpu_interface",
                         "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp_cpu_interface.v",
                         "ModuleLine": 58,
@@ -65,7 +93,7 @@
                     },
                     {
                         "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp.v",
-                        "InstLine": 345,
+                        "InstLine": 350,
                         "InstName": "u_timing_control",
                         "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp_timing_control.v",
                         "ModuleLine": 57,
@@ -133,7 +161,7 @@
                     },
                     {
                         "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp.v",
-                        "InstLine": 420,
+                        "InstLine": 425,
                         "InstName": "u_command",
                         "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp_command.v",
                         "ModuleLine": 57,
@@ -141,7 +169,7 @@
                     },
                     {
                         "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp.v",
-                        "InstLine": 459,
+                        "InstLine": 464,
                         "InstName": "u_cache",
                         "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp_command_cache.v",
                         "ModuleLine": 57,
@@ -149,7 +177,7 @@
                     },
                     {
                         "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp.v",
-                        "InstLine": 492,
+                        "InstLine": 497,
                         "InstName": "u_vram_interface",
                         "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp_vram_interface.v",
                         "ModuleLine": 58,
@@ -157,7 +185,7 @@
                     },
                     {
                         "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp.v",
-                        "InstLine": 534,
+                        "InstLine": 539,
                         "InstName": "u_color_palette",
                         "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp_color_palette.v",
                         "ModuleLine": 58,
@@ -175,7 +203,7 @@
                     },
                     {
                         "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp.v",
-                        "InstLine": 564,
+                        "InstLine": 569,
                         "InstName": "u_upscan",
                         "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp_upscan.v",
                         "ModuleLine": 60,
@@ -201,7 +229,7 @@
                     },
                     {
                         "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp.v",
-                        "InstLine": 585,
+                        "InstLine": 590,
                         "InstName": "u_video_out",
                         "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/v9968/vdp_video_out.v",
                         "ModuleLine": 60,
@@ -263,7 +291,7 @@
             },
             {
                 "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/tangnano20k_vdp_cartridge.v",
-                "InstLine": 247,
+                "InstLine": 287,
                 "InstName": "u_dvi",
                 "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/dvi_tx/dvi_tx.v",
                 "ModuleLine": 1072,
@@ -281,7 +309,7 @@
             },
             {
                 "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/tangnano20k_vdp_cartridge.v",
-                "InstLine": 268,
+                "InstLine": 308,
                 "InstName": "u_sdram",
                 "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/sdram/ip_sdram_tangnano20k_c.v",
                 "ModuleLine": 57,
@@ -289,7 +317,7 @@
             },
             {
                 "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/tangnano20k_vdp_cartridge.v",
-                "InstLine": 296,
+                "InstLine": 336,
                 "InstName": "u_led",
                 "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/ws2812_led/ip_ws2812_led.v",
                 "ModuleLine": 57,
@@ -297,7 +325,7 @@
             },
             {
                 "InstFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/tangnano20k_vdp_cartridge.v",
-                "InstLine": 310,
+                "InstLine": 350,
                 "InstName": "u_debugger",
                 "ModuleFile": "C:/Users/hra/Documents/github/HRA_product/V9968_Cartridge/fpga/V9968_Cartridge_TangNano20K/src/debugger/ip_debugger.v",
                 "ModuleLine": 57,

@@ -91,6 +91,11 @@ module vdp (
 	// Force Highspeed Mode
 	input				force_highspeed,
 
+	input				ext_cmd_wr,			//	geo3d: external command register write
+	input		[5:0]	ext_cmd_num,
+	input		[7:0]	ext_cmd_data,
+	output				ext_cmd_ce,			//	geo3d: S#2 CE
+
 	// debug pulse
 	input		[ 1:0]	button,
 	output				pulse0,
@@ -272,7 +277,7 @@ module vdp (
 		.sprite_collision_x							( w_sprite_collision_x						),
 		.sprite_collision_y							( w_sprite_collision_y						),
 		.clear_sprite_overmap						( w_clear_sprite_overmap					),
-		.sprite_overmap_enable					( w_sprite_overmap_enable				),
+		.sprite_overmap_enable						( w_sprite_overmap_enable					),
 		.sprite_overmap								( w_sprite_overmap							),
 		.sprite_overmap_id							( w_sprite_overmap_id						),
 		.clear_border_detect						( w_clear_border_detect						),
@@ -420,18 +425,18 @@ module vdp (
 	vdp_command u_command (
 		.reset_n									( reset_n									),
 		.clk										( clk										),
-		.cache_vram_address						( w_cache_vram_address					),
-		.cache_vram_valid							( w_cache_vram_valid					),
-		.cache_vram_ready							( w_cache_vram_ready					),
-		.cache_vram_write							( w_cache_vram_write					),
-		.cache_vram_wdata							( w_cache_vram_wdata					),
-		.cache_vram_rdata							( w_cache_vram_rdata					),
-		.cache_vram_rdata_en						( w_cache_vram_rdata_en					),
-		.cache_flush_start						( w_cache_flush_start					),
-		.cache_flush_end							( w_cache_flush_end					),
-		.register_write								( w_register_write							),
-		.register_num								( w_register_num							),
-		.register_data								( w_register_data							),
+		.cache_vram_address							( w_cache_vram_address						),
+		.cache_vram_valid							( w_cache_vram_valid						),
+		.cache_vram_ready							( w_cache_vram_ready						),
+		.cache_vram_write							( w_cache_vram_write						),
+		.cache_vram_wdata							( w_cache_vram_wdata						),
+		.cache_vram_rdata							( w_cache_vram_rdata						),
+		.cache_vram_rdata_en						( w_cache_vram_rdata_en						),
+		.cache_flush_start							( w_cache_flush_start						),
+		.cache_flush_end							( w_cache_flush_end							),
+		.register_write								( w_register_write | ext_cmd_wr				),
+		.register_num								( ext_cmd_wr ? ext_cmd_num  : w_register_num  ),
+		.register_data								( ext_cmd_wr ? ext_cmd_data : w_register_data ),
 		.clear_border_detect						( w_clear_border_detect						),
 		.read_color									( w_read_color								),
 		.status_command_execute						( w_status_command_execute					),
@@ -457,33 +462,33 @@ module vdp (
 		{ w_cpu_vram_address[17], w_cpu_vram_address[0], w_cpu_vram_address[16:1] } : w_cpu_vram_address;
 
 	vdp_command_cache u_cache (
-		.reset_n                       ( reset_n                     ),
-		.clk                           ( clk                         ),
-		.start                         ( 1'b0                        ),
-		.cache_vram_address            ( w_cache_vram_address        ),
-		.cache_vram_valid              ( w_cache_vram_valid          ),
-		.cache_vram_ready              ( w_cache_vram_ready          ),
-		.cache_vram_write              ( w_cache_vram_write          ),
-		.cache_vram_wdata              ( w_cache_vram_wdata          ),
-		.cache_vram_rdata              ( w_cache_vram_rdata          ),
-		.cache_vram_rdata_en           ( w_cache_vram_rdata_en       ),
-		.cache_flush_start             ( w_cache_flush_start         ),
-		.cache_flush_end               ( w_cache_flush_end           ),
-		.cpu_vram_address              ( w_cpu_cache_address         ),
-		.cpu_vram_valid                ( w_cpu_vram_valid            ),
-		.cpu_vram_ready                ( w_cpu_vram_ready            ),
-		.cpu_vram_write                ( w_cpu_vram_write            ),
-		.cpu_vram_wdata                ( w_cpu_vram_wdata            ),
-		.cpu_vram_rdata                ( w_cpu_vram_rdata            ),
-		.cpu_vram_rdata_en             ( w_cpu_vram_rdata_en         ),
-		.command_vram_address          ( w_command_vram_address      ),
-		.command_vram_valid            ( w_command_vram_valid        ),
-		.command_vram_ready            ( w_command_vram_ready        ),
-		.command_vram_write            ( w_command_vram_write        ),
-		.command_vram_wdata            ( w_command_vram_wdata        ),
-		.command_vram_wdata_mask       ( w_command_vram_wdata_mask   ),
-		.command_vram_rdata            ( w_command_vram_rdata        ),
-		.command_vram_rdata_en         ( w_command_vram_rdata_en     )
+		.reset_n									( reset_n								),
+		.clk										( clk									),
+		.start										( 1'b0									),
+		.cache_vram_address							( w_cache_vram_address					),
+		.cache_vram_valid							( w_cache_vram_valid					),
+		.cache_vram_ready							( w_cache_vram_ready					),
+		.cache_vram_write							( w_cache_vram_write					),
+		.cache_vram_wdata							( w_cache_vram_wdata					),
+		.cache_vram_rdata							( w_cache_vram_rdata					),
+		.cache_vram_rdata_en						( w_cache_vram_rdata_en					),
+		.cache_flush_start							( w_cache_flush_start					),
+		.cache_flush_end							( w_cache_flush_end						),
+		.cpu_vram_address							( w_cpu_cache_address					),
+		.cpu_vram_valid								( w_cpu_vram_valid						),
+		.cpu_vram_ready								( w_cpu_vram_ready						),
+		.cpu_vram_write								( w_cpu_vram_write						),
+		.cpu_vram_wdata								( w_cpu_vram_wdata						),
+		.cpu_vram_rdata								( w_cpu_vram_rdata						),
+		.cpu_vram_rdata_en							( w_cpu_vram_rdata_en					),
+		.command_vram_address						( w_command_vram_address				),
+		.command_vram_valid							( w_command_vram_valid					),
+		.command_vram_ready							( w_command_vram_ready					),
+		.command_vram_write							( w_command_vram_write					),
+		.command_vram_wdata							( w_command_vram_wdata					),
+		.command_vram_wdata_mask					( w_command_vram_wdata_mask				),
+		.command_vram_rdata							( w_command_vram_rdata					),
+		.command_vram_rdata_en						( w_command_vram_rdata_en				)
 	);
 
 	// --------------------------------------------------------------------
@@ -604,4 +609,6 @@ module vdp (
 		.reg_normalize								( 8'd41										),
 		.reg_50hz_mode								( reg_50hz_mode								)
 	);
+	assign ext_cmd_ce = w_status_command_execute;
+
 endmodule
