@@ -67,6 +67,7 @@ module tangnano20k_vdp_cartridge (
 	wire			pll_lock215;
 	wire			pll_lock85;
 	wire			clk42m;				//	42.95454MHz
+	wire			clk42g;				//	42.95454MHz (geo3d engine: CLKOUTD of u_pll2 = clk85m / 2)
 	wire			clk85m;				//	85.90908MHz
 	wire			clk85m_n;			//	85.90908MHz (180deg phase shift)
 	wire			clk215m;			//	214.7727MHz
@@ -158,6 +159,7 @@ module tangnano20k_vdp_cartridge (
 		.clkout			( clk85m			),		//	output clkout	85.90908MHz
 		.lock			( pll_lock85		),
 		.clkoutp		( clk85m_n			),		//	output clkoutp	85.90908MHz (180deg phase shift)
+		.clkoutd		( clk42g			),		//	output clkoutd	42.95454MHz (CLKOUT / 2, geo3d engine only)
 		.clkin			( clk14m			)		//	input clkin		14.31818MHz
     );
 
@@ -193,21 +195,55 @@ module tangnano20k_vdp_cartridge (
 		.dipsw				( dipsw[0]					)
 	);
 
-	assign w_bus_rdata		= ( w_bus_vdp_rdata_en		) ? w_bus_vdp_rdata: 8'hFF;
-	assign w_bus_rdata_en	= w_bus_vdp_rdata_en;
-	assign w_bus_ready		= w_bus_vdp_ready;
+	// --------------------------------------------------------------------
+	//	geo3d coprocessor (ports base+5 / base+7)
+	// --------------------------------------------------------------------
+	wire			w_geo_hit;
+	wire			w_geo_ready;
+	wire	[7:0]	w_geo_rdata;
+	wire			w_geo_rdata_en;
+	wire			w_geo_cmd_wr;
+	wire	[5:0]	w_geo_cmd_num;
+	wire	[7:0]	w_geo_cmd_data;
+	wire			w_geo_cmd_ce;
+	wire			w_geo_run_busy;
+
+	geo3d_bus u_geo3d (
+		.clk				( clk85m					),
+		.clk_eng			( clk42g					),
+		.reset_n			( reset_n3					),
+		.bus_address		( w_bus_address				),
+		.bus_ioreq			( w_bus_ioreq				),
+		.bus_write			( w_bus_write				),
+		.bus_valid			( w_bus_valid				),
+		.bus_wdata			( w_bus_wdata				),
+		.hit				( w_geo_hit					),
+		.bus_ready			( w_geo_ready				),
+		.bus_rdata			( w_geo_rdata				),
+		.bus_rdata_en		( w_geo_rdata_en			),
+		.cmd_wr				( w_geo_cmd_wr				),
+		.cmd_num			( w_geo_cmd_num				),
+		.cmd_data			( w_geo_cmd_data			),
+		.cmd_ce				( w_geo_cmd_ce				),
+		.run_busy			( w_geo_run_busy			)
+	);
+
+	assign w_bus_rdata		= ( w_geo_rdata_en		) ? w_geo_rdata:
+						  ( w_bus_vdp_rdata_en	) ? w_bus_vdp_rdata: 8'hFF;
+	assign w_bus_rdata_en	= w_bus_vdp_rdata_en | w_geo_rdata_en;
+	assign w_bus_ready		= w_geo_hit ? w_geo_ready: w_bus_vdp_ready;
 
 	// --------------------------------------------------------------------
-	//	V9958 clone
+	//	V9968 core
 	// --------------------------------------------------------------------
-	vdp u_v9958 (
+	vdp u_v9968 (
 		.reset_n			( reset_n3					),
 		.clk				( clk85m					),
 		.initial_busy		( w_sdram_init_busy			),
 		.bus_address		( w_bus_address				),
 		.bus_ioreq			( w_bus_ioreq				),
 		.bus_write			( w_bus_write				),
-		.bus_valid			( w_bus_valid				),
+		.bus_valid			( w_bus_valid & ~w_geo_hit	),
 		.bus_ready			( w_bus_vdp_ready			),
 		.bus_wdata			( w_bus_wdata				),
 		.bus_rdata			( w_bus_vdp_rdata			),
@@ -227,6 +263,10 @@ module tangnano20k_vdp_cartridge (
 		.display_r			( w_video_r					),
 		.display_g			( w_video_g					),
 		.display_b			( w_video_b					),
+		.ext_cmd_wr			( w_geo_cmd_wr				),
+		.ext_cmd_num		( w_geo_cmd_num				),
+		.ext_cmd_data		( w_geo_cmd_data			),
+		.ext_cmd_ce			( w_geo_cmd_ce				),
 		.force_highspeed	( dipsw[1]					),
 		.button				( button					),
 		.pulse0				( w_pulse0					),

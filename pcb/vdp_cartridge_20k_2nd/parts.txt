@@ -1,7 +1,7 @@
 R4, R5 ....... 3.3Kohm
 R2 ........... 10Kohm
-Q1, Q2, Q3 ... TO236AB (MOSFET Nch)
-U1 ........... CLOCK 14.318180MHz or 28.63636MHz (production\bom.csv is 28.63636MHz)
+Q1, Q2, Q3 ... TO236AB (MOSFET Nch)			https://jlcpcb.com/partdetail/InfineonTechnologies-IRLML2502TRPBF/C2589
+U1 ........... CLOCK 14.318180MHz			https://jlcpcb.com/partdetail/3151378-SX3M1431818M20F30TNN/C2901565
 C3 ........... 15pF
 C1 ........... N/A
 C2-C9 ........ 0.1uF
