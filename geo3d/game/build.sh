@@ -32,6 +32,11 @@ for p in 98 88; do
   head -c 65536 out/shooter_$p.bin > out/GEO3D_SHOOTER_$p.ROM
   size=$(stat -c %s out/GEO3D_SHOOTER_$p.ROM)
   [ "$size" = 65536 ] || { echo "ROM size $size, expected 65536"; exit 1; }
+  # the mapper tag (shooter.asm, ../tools/mapper_tag_ascii16.asm): "ROM_AS16" at
+  # 4010h, and openMSX's LD (nnnn),A count (no -romtype) gives ASCII16 with a lead
+  if ! $PY ../tools/mapper_guess.py --expect ASCII16 --margin 16 out/GEO3D_SHOOTER_$p.ROM > out/mapper_$p.txt; then
+    cat out/mapper_$p.txt; echo "out/GEO3D_SHOOTER_$p.ROM does not read as ASCII16 to a mapper guesser"; exit 1
+  fi
 done
 lab() { grep "^$1:" out/labels_98.txt | head -1 | sed 's/.*\$//'; }
 printf 'bank 0 code: %d bytes free, bank 1 data: %d bytes free, bank 2 tiles: %d bytes free\n' \

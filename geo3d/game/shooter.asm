@@ -76,6 +76,8 @@ MODE_OVER:  equ 4
         dw init
         dw 0, 0, 0
         ds 6, 0
+        db "ROM_AS16"                   ; 4010h: ROM type signature (MSXgl): ASCII16
+        include "../tools/mapper_tag_ascii16.asm"     ; never run: for mapper guessers
 
 init:
         di
