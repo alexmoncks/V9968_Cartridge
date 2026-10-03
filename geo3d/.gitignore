@@ -33,6 +33,7 @@ z80/GEO3D.COM
 z80/GEO3DF.COM
 basic/out/
 game/out/
+sphere7/out/
 game/music/
 game/*.mod
 game/*.mid

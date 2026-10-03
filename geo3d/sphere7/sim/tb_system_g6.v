@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Alex Moncks
+`timescale 1ns/1ps
+// SCREEN 7 (GRAPHIC6) copy of geo3d/sim/tb_system.v, for the sphere demo.
+// End-to-end testbench: geo3d_bus (engine at 42.95 MHz, bus at 85.9 MHz)
+// drives HRA!'s original V9968 command engine (vdp_command.v and
+// vdp_command_cache.v, unmodified, wired as in vdp.v since his 88132d2),
+// which draws into a 256 KB VRAM model in SCREEN 7 (GRAPHIC6), with vdp.v's
+// GRAPHIC6 VRAM interleave (+ilv=1, the default; the stimulus and the dumps
+// use logical addresses). The stimulus is the traffic of the sphere ROM run
+// in a Z80 emulator (../run_z80.py --sys): geo3d port writes, the Z80's own
+// VDP commands (HMMV, HMMM, PSET), VRAM uploads, page flips.
+//
+// Ops: W sel b | R | F n | V reg val | C | X addr b | D y0
+// Output (+frames=...): for every D, 212 rows x 256 bytes of VRAM starting at
+// y0 (the page just shown), one hex byte per line; (+times=...) per RUN, the
+// time until geo3d is idle and the time the Z80's commands before it kept
+// CE up, in us.
+// The command engine runs in V9968 mode (extended commands, 256 KB) with
+// high-speed commands, as the ROM selects (R#21 = 0, R#20 bit 0 = 1).
+module tb_system_g6;
+    reg clk = 0, clk_eng = 0, rst = 1;
+    always #5.82 clk = ~clk;
+    always @(posedge clk) clk_eng <= ~clk_eng;
+
+    // ---------------------------------------------------------------- geo3d
+    reg  [2:0] bus_address = 0;
+    reg        bus_ioreq = 0, bus_write = 0, bus_valid = 0;
+    reg  [7:0] bus_wdata = 0;
+    wire       hit, bus_ready, bus_rdata_en, run_busy;
+    wire [7:0] bus_rdata;
+    wire       g_wr;
+    wire [5:0] g_num;
+    wire [7:0] g_data;
+    wire       ce;
+
+    geo3d_bus u_geo (
+        .clk(clk), .clk_eng(clk_eng), .reset_n(~rst),
+        .bus_address(bus_address), .bus_ioreq(bus_ioreq), .bus_write(bus_write),
+        .bus_valid(bus_valid), .bus_wdata(bus_wdata), .hit(hit), .bus_ready(bus_ready),
+        .bus_rdata(bus_rdata), .bus_rdata_en(bus_rdata_en),
+        .cmd_wr(g_wr), .cmd_num(g_num), .cmd_data(g_data), .cmd_ce(ce), .run_busy(run_busy)
+    );
+
+    // ------------------------------------------- V9968 command engine (HRA!)
+    reg        z_wr = 0;              // Z80's own command-register writes
+    reg  [5:0] z_num = 0;
+    reg  [7:0] z_data = 0;
+    wire [17:0] a;
+    wire        v, w;
+    wire [31:0] wd;
+    wire [3:0]  wm;
+    reg  [31:0] rd;
+    reg         rde;
+
+    wire [17:0] ca;                   // engine <-> shared cache (vdp.v since 88132d2)
+    wire        cv, cr, cw, crde, cfs, cfe;
+    wire [7:0]  cwd, crd;
+
+    // same hookup as the patched vdp.v: external port OR-ed in
+    vdp_command u_cmd (
+        .reset_n(~rst), .clk(clk),
+        .cache_vram_address(ca), .cache_vram_valid(cv), .cache_vram_ready(cr),
+        .cache_vram_write(cw), .cache_vram_wdata(cwd), .cache_vram_rdata(crd),
+        .cache_vram_rdata_en(crde), .cache_flush_start(cfs), .cache_flush_end(cfe),
+        .register_write(z_wr | g_wr), .register_num(g_wr ? g_num : z_num),
+        .register_data(g_wr ? g_data : z_data),
+        .clear_border_detect(1'b0), .read_color(1'b0),
+        .status_command_execute(ce), .status_border_detect(), .status_transfer_ready(),
+        .status_color(), .status_border_position(),
+        .screen_mode(10'b0000100000), .vram_interleave(ilv), .reg_text_back_color(8'd0),
+        .reg_command_enable(1'b1), .reg_command_high_speed_mode(1'b1),
+        .reg_ext_command_mode(1'b1), .reg_vram256k_mode(1'b1),
+        .vram_access_mask(), .intr_command_end()
+    );
+
+    // HRA!'s shared VRAM cache, wired as in vdp.v (88132d2 and later); the CPU
+    // port is idle here (start is tied to 0 in vdp.v as well)
+    vdp_command_cache u_cache (
+        .reset_n(~rst), .clk(clk), .start(1'b0),
+        .cache_vram_address(ca), .cache_vram_valid(cv), .cache_vram_ready(cr),
+        .cache_vram_write(cw), .cache_vram_wdata(cwd), .cache_vram_rdata(crd),
+        .cache_vram_rdata_en(crde), .cache_flush_start(cfs), .cache_flush_end(cfe),
+        .cpu_vram_address(18'd0), .cpu_vram_valid(1'b0), .cpu_vram_ready(),
+        .cpu_vram_write(1'b0), .cpu_vram_wdata(8'd0), .cpu_vram_rdata(), .cpu_vram_rdata_en(),
+        .command_vram_address(a), .command_vram_valid(v), .command_vram_ready(1'b1),
+        .command_vram_write(w), .command_vram_wdata(wd), .command_vram_wdata_mask(wm),
+        .command_vram_rdata(rd), .command_vram_rdata_en(rde)
+    );
+
+    reg [31:0] mem [0:65535];
+    integer i;
+    always @(posedge clk) begin
+        rde <= 1'b0;
+        if (v) begin
+            if (w) begin
+                if (!wm[0]) mem[a[17:2]][ 7: 0] <= wd[ 7: 0];
+                if (!wm[1]) mem[a[17:2]][15: 8] <= wd[15: 8];
+                if (!wm[2]) mem[a[17:2]][23:16] <= wd[23:16];
+                if (!wm[3]) mem[a[17:2]][31:24] <= wd[31:24];
+            end else begin
+                rd  <= mem[a[17:2]];
+                rde <= 1'b1;
+            end
+        end
+    end
+
+    reg ilv;                          // +ilv=1: vdp.v's GRAPHIC6 VRAM interleave (default)
+    // logical byte address (the Z80's, the dumps') -> physical
+    function integer phys;
+        input integer la;
+        begin
+            phys = ilv ? ((la & 32'h20000) | ((la & 1) << 16) | ((la >> 1) & 32'hFFFF)) : la;
+        end
+    endfunction
+
+    integer z80_vs_geo;               // Z80 command write while geo3d is drawing
+    always @(posedge clk) if (z_wr && run_busy) z80_vs_geo = z80_vs_geo + 1;
+
+    // ---------------------------------------------------------------- bus tasks
+    task io_wr(input s, input [7:0] d);
+        begin
+            @(negedge clk);
+            bus_address = s ? 3'd7 : 3'd5; bus_write = 1; bus_ioreq = 1;
+            bus_wdata = d; bus_valid = 1;
+            @(posedge clk); while (!bus_ready) @(posedge clk);
+            @(negedge clk); bus_valid = 0; bus_ioreq = 0;
+            repeat (3) @(negedge clk);
+        end
+    endtask
+
+    task io_rd(input s, output [7:0] d);
+        begin
+            @(negedge clk);
+            bus_address = s ? 3'd7 : 3'd5; bus_write = 0; bus_ioreq = 1; bus_valid = 1;
+            @(posedge clk); while (!bus_ready) @(posedge clk);
+            @(negedge clk); bus_valid = 0;
+            @(posedge clk); while (!bus_rdata_en) @(posedge clk);
+            d = bus_rdata;
+            @(negedge clk); bus_ioreq = 0;
+            repeat (3) @(negedge clk);
+        end
+    endtask
+
+    // ---------------------------------------------------------------- replay
+    reg [8*80-1:0] fstim, fframes, ftimes;
+    integer fi, fo, ft, r, p1, p2, frames, dumps, y, xb, t0, maxrun, pa, tz, zcmd;
+    reg [8*4-1:0] op;
+    reg [7:0] st;
+
+    initial begin
+        if (!$value$plusargs("stim=%s", fstim))     fstim   = "sys_stim.txt";
+        if (!$value$plusargs("frames=%s", fframes)) fframes = "sys_got.hex";
+        if (!$value$plusargs("times=%s", ftimes))   ftimes  = "sys_times.txt";
+        if (!$value$plusargs("ilv=%d", ilv))         ilv     = 1'b1;
+        zcmd = 0;
+        for (i = 0; i < 65536; i = i + 1) mem[i] = 32'd0;
+        z80_vs_geo = 0; frames = 0; dumps = 0; maxrun = 0;
+        repeat (6) @(negedge clk);
+        rst = 0;
+        repeat (6) @(negedge clk);
+        fi = $fopen(fstim, "r");
+        fo = $fopen(fframes, "w");
+        ft = $fopen(ftimes, "w");
+        while (!$feof(fi)) begin
+            r = $fscanf(fi, "%s", op);
+            if (r == 1) begin
+                case (op[7:0])
+                    "W": begin r = $fscanf(fi, "%d %h", p1, p2); io_wr(p1[0], p2[7:0]); end
+                    "R": begin
+                        t0 = $time;
+                        st = 8'h01;
+                        while (st[0]) io_rd(0, st);
+                        if (($time - t0) > maxrun) maxrun = $time - t0;
+                        $fwrite(ft, "R %0d %0d\n", ($time - t0) / 1000, zcmd / 1000);
+                        zcmd = 0;
+                    end
+                    "F": begin r = $fscanf(fi, "%d", p1); frames = frames + 1; end
+                    "V": begin
+                        r = $fscanf(fi, "%d %h", p1, p2);
+                        @(negedge clk); z_wr = 1; z_num = p1; z_data = p2;
+                        @(negedge clk); z_wr = 0;
+                    end
+                    "C": begin
+                        tz = $time;
+                        repeat (4) @(negedge clk);
+                        while (ce) @(negedge clk);
+                        zcmd = zcmd + ($time - tz);
+                    end
+                    "X": begin
+                        r = $fscanf(fi, "%h %h", p1, p2);
+                        pa = phys(p1);
+                        mem[pa >> 2][8 * (pa & 3) +: 8] = p2[7:0];
+                    end
+                    "D": begin
+                        r = $fscanf(fi, "%d", p1);
+                        for (y = 0; y < 212; y = y + 1)
+                            for (xb = 0; xb < 256; xb = xb + 1) begin
+                                pa = phys((p1 + y) * 256 + xb);
+                                $fwrite(fo, "%02x\n", mem[pa >> 2][8 * (pa & 3) +: 8]);
+                            end
+                        dumps = dumps + 1;
+                    end
+                    default: ;
+                endcase
+            end
+        end
+        $fclose(fo);
+        $fclose(ft);
+        $display("System: %0d frames, %0d pages dumped, longest RUN = %0d us, Z80 command writes during RUN = %0d",
+                 frames, dumps, maxrun / 1000, z80_vs_geo);
+        $finish;
+    end
+endmodule
