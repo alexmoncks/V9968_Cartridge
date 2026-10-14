@@ -97,7 +97,7 @@ module tb_bus;
     endtask
 
     // ------------------------------------------------ stimulus replay
-    integer fi, r, a, b, frames, maxcyc, cyc;
+    integer fi, r, a, b, frames, maxcyc, cyc, gi;
     reg [8*4-1:0] op;
     reg [7:0] st, k0, k1, k2, k3, k4, k5;
     integer t_start;
@@ -132,6 +132,16 @@ module tb_bus;
                     io_rd(1, k0); io_rd(1, k1); io_rd(1, k2);
                     io_rd(1, k3); io_rd(1, k4); io_rd(1, k5);
                     $fwrite(fo, "K %02x%02x %02x%02x %02x%02x\n", k1, k0, k3, k2, k5, k4);
+                end else if (op[7:0] == "G") begin
+                    // G <index, hex> <count>: read registers (v2.0)
+                    r = $fscanf(fi, "%h %d", a, b);
+                    io_wr(0, a[7:0]);
+                    $fwrite(fo, "G %02x", a[7:0]);
+                    for (gi = 0; gi < b; gi = gi + 1) begin
+                        io_rd(1, k0);
+                        $fwrite(fo, " %02x", k0);
+                    end
+                    $fwrite(fo, "\n");
                 end else if (op[7:0] == "F") begin
                     r = $fscanf(fi, "%d", a);
                     $fwrite(fo, "F %0d\n", a);

@@ -41,7 +41,15 @@ module tb_engine;
                 if (cmd_num == 6'd46) begin
                     started  <= 1;
                     ce_delay <= 2;            // ff_start, then ff_command_execute
-                    ce_hold  <= 6 + (vreg[40] % 29) + (($random & 7));
+                    // +hs=1: how long the V9968 takes in high-speed mode, in
+                    // engine clocks (LINE 7.0 and LRMM 11.6 clocks of 85.9 MHz
+                    // a pixel, geo3d/README.md); otherwise any short time
+                    if (hs_timing)
+                        ce_hold <= (cmd_data[7:4] == 4'h3)
+                                   ? (58 * {vreg[41][2:0], vreg[40]}) / 10
+                                   : (7 * ({vreg[41][2:0], vreg[40]} + 1)) / 2;
+                    else
+                        ce_hold <= 6 + (vreg[40] % 29) + (($random & 7));
                     ncmd = ncmd + 1;
                     if (cmd_data[7:4] == 4'h3)
                         $fwrite(fo, "M %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
@@ -85,7 +93,16 @@ module tb_engine;
     reg [8*4-1:0] op;
     reg [7:0] st, k0, k1, k2, k3, k4, k5;
     integer t_start;
-    reg [8*64-1:0] stim_name, got_name;
+    reg [8*64-1:0] stim_name, got_name, time_name;
+    // +time=<file>: engine clocks with RUN busy = 1 in each frame, one line
+    // per F marker ("<frame> <clocks>")
+    integer ft, busy_cyc, hs_timing, gi;
+    initial begin
+        ft = 0; busy_cyc = 0; hs_timing = 0;
+        if ($value$plusargs("hs=%d", hs_timing)) ;
+        if ($value$plusargs("time=%s", time_name)) ft = $fopen(time_name, "w");
+    end
+    always @(posedge clk) if (run_busy) busy_cyc = busy_cyc + 1;
 
     initial begin
         violations = 0; ncmd = 0; frames = 0; maxcyc = 0;
@@ -116,9 +133,21 @@ module tb_engine;
                     io_rd(1, k0); io_rd(1, k1); io_rd(1, k2);
                     io_rd(1, k3); io_rd(1, k4); io_rd(1, k5);
                     $fwrite(fo, "K %02x%02x %02x%02x %02x%02x\n", k1, k0, k3, k2, k5, k4);
+                end else if (op[7:0] == "G") begin
+                    // G <index, hex> <count>: read registers (v2.0)
+                    r = $fscanf(fi, "%h %d", a, b);
+                    io_wr(0, a[7:0]);
+                    $fwrite(fo, "G %02x", a[7:0]);
+                    for (gi = 0; gi < b; gi = gi + 1) begin
+                        io_rd(1, k0);
+                        $fwrite(fo, " %02x", k0);
+                    end
+                    $fwrite(fo, "\n");
                 end else if (op[7:0] == "F") begin
                     r = $fscanf(fi, "%d", a);
                     $fwrite(fo, "F %0d\n", a);
+                    if (ft != 0) $fwrite(ft, "%0d %0d\n", a, busy_cyc);
+                    busy_cyc = 0;
                     frames = frames + 1;
                 end
             end

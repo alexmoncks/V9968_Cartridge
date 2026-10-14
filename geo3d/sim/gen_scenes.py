@@ -84,15 +84,18 @@ def line_bytes(x1, y1, x2, y2, color, lop, ypage):
 
 
 def render(cfg, verts, edges, color, lop, ypage):
+    """One wireframe RUN of a model whose vertices are all transformed."""
+    return draw_edges(cfg, [core_model(cfg, v) for v in verts], edges, color, lop, ypage)
+
+
+def draw_edges(cfg, proj, edges, color, lop, ypage):
+    """The edge phase. proj[i] = (sx, sy, z, flags) of vertex i, as the
+    transform phase of this RUN or of an earlier one left it."""
     w, h = cfg[16], cfg[17]
-    proj = []
-    for v in verts:
-        sx, sy, z, fl = core_model(cfg, v)
-        proj.append((sx, sy, fl))
     cmds, skip, cull = [], 0, 0
     for a, b in edges:
         pa, pb = proj[a], proj[b]
-        if (pa[2] & 7) or (pb[2] & 7):
+        if (pa[3] & 7) or (pb[3] & 7):
             skip += 1
             continue
         kind, seg = clip_edge((pa[0], pa[1]), (pb[0], pb[1]), w, h)
@@ -124,12 +127,21 @@ def render_faces(cfg, verts, faces, lop, ypage, light, tex=None):
     tex: None, or dict(on, texx, texy, tstride, uv) with uv[face] = 8 bytes
     (u0 v0 u1 v1 u2 v2 u3 v3). Returns (cmds, skip, draw, cull); cmds are
     11-byte LINE entries or 19-byte LRMM entries."""
+    proj = [core_model(cfg, v) for v in verts]            # sx, sy, z, flags
+    return draw_faces(cfg, proj, list(enumerate(faces)), lop, ypage, light, tex)
+
+
+def draw_faces(cfg, proj, faces, lop, ypage, light, tex=None):
+    """The face phase. proj[i] = (sx, sy, z, flags) of vertex i, as the
+    transform phase of this RUN or of an earlier one left it; faces is a list
+    of (face number, face): the number breaks depth ties and picks the
+    texture coordinates."""
     w, h = cfg[16], cfg[17]
     m = cfg[0:9]
-    proj = [core_model(cfg, v) for v in verts]            # sx, sy, z, flags
     lm = [sat18(sum(m[3 * i + j] * light[i] for i in range(3)) >> 14) for j in range(3)]
     vis, skip, cull = [], 0, 0
-    for fidx, f in enumerate(faces):
+    by_number = dict(faces)
+    for fidx, f in faces:
         pv = [proj[f[k]] for k in range(4)]
         if any(p[3] & 7 for p in pv):
             skip += 1
@@ -145,7 +157,7 @@ def render_faces(cfg, verts, faces, lop, ypage, light, tex=None):
         vis.append((key, fidx, (f[7] + lvl) & 0xFF, lvl))
     cmds = []
     for key, fidx, col, lvl in sorted(vis, key=lambda e: (-e[0], e[1])):
-        f = faces[fidx]
+        f = by_number[fidx]
         textured = bool(tex and tex["on"] and (f[7] & 0x80))
         uv = tex["uv"][fidx] if textured else [0] * 8
         xs = [proj[f[k]][0] for k in range(4)]
@@ -323,18 +335,24 @@ def main():
           f"LINEs esperados: {totals['draw']}, skip: {totals['skip']}, cull: {totals['cull']}")
 
 
+ID_V2 = 0x20          # index 0x49: geo3d v2.0 (v1.0.0 reads FFh there)
+AW = 10               # address bits of every model RAM: the engine's AW parameter
+NMEM = 1 << AW        # ... 1024 entries (v1.0.0: 256)
+
+
 def replay(ops, totals):
     """Interprets the Z80 byte stream exactly like the engine's register window."""
-    regs = {"widx": 0, "lo": 0, "vaddr": 0, "eaddr": 0, "nvert": 0, "nedge": 0,
+    regs = {"widx": 0, "rptr": 0x30, "lo": 0, "vaddr": 0, "eaddr": 0, "nvert": 0, "nedge": 0,
             "color": 15, "lop": 0, "ypage": 0, "vbuf": [], "ebuf": [], "fbuf": [],
-            "faddr": 0, "nface": 0}
+            "faddr": 0, "nface": 0, "vfirst": 0, "efirst": 0, "ffirst": 0, "ext": 0}
     light = [0, 0, -16384]
-    fmem = [(0, 0, 0, 0, 0, 0, 0, 0)] * 256
-    tmem = [[0] * 8 for _ in range(256)]
+    fmem = [(0, 0, 0, 0, 0, 0, 0, 0)] * NMEM
+    tmem = [[0] * 8 for _ in range(NMEM)]
     tx = {"texx": 0, "texy": 512, "tstride": 0, "taddr": 0, "buf": []}
     cfg = [0] * 9 + [0, 0, 0] + [256, 128, 106, 16, 256, 212]
-    vmem = [(0, 0, 0)] * 256
-    emem = [(0, 0)] * 256
+    vmem = [(0, 0, 0)] * NMEM
+    emem = [(0, 0)] * NMEM
+    pmem = [None] * NMEM            # projected vertices: they outlive the RUN
     log = []
     pending = None
     last_counts = (0, 0, 0)
@@ -342,12 +360,50 @@ def replay(ops, totals):
     def signed16(x):
         return x - 0x10000 if x & 0x8000 else x
 
+    def lo8(name, b):               # low byte of a 10-bit register
+        regs[name] = (regs[name] & 0x300) | b
+
+    def hi2(name, b):               # its two high bits
+        regs[name] = (regs[name] & 0xFF) | ((b & 3) << 8)
+
+    def bump(d, name):
+        """A write pointer after an entry: 10 bits in extended mode; else only
+        the low byte counts, as in v1.0.0 (it wraps at 256)."""
+        p = d[name]
+        d[name] = (p + 1) & 0x3FF if regs["ext"] else (p & 0x300) | ((p + 1) & 0xFF)
+
+    class Proj:
+        def __getitem__(self, i):
+            if pmem[i] is None:
+                raise ValueError("vertex %d is used but was never transformed" % i)
+            return pmem[i]
+
+    def rdata(i):
+        c = last_counts
+        table = {0x40: regs["vaddr"] & 0xFF, 0x41: regs["eaddr"] & 0xFF,
+                 0x42: regs["nvert"] & 0xFF, 0x43: regs["nedge"] & 0xFF,
+                 0x44: regs["color"], 0x45: regs["lop"],
+                 0x46: regs["ypage"] & 0xFF, 0x47: regs["ypage"] >> 8,
+                 0x48: 0, 0x49: ID_V2,
+                 0x4A: c[0] & 0xFF, 0x4B: c[0] >> 8, 0x4C: c[1] & 0xFF, 0x4D: c[1] >> 8,
+                 0x4E: c[2] & 0xFF, 0x4F: c[2] >> 8,
+                 0x54: regs["vfirst"] & 0xFF, 0x55: regs["vfirst"] >> 8,
+                 0x56: regs["ffirst"] & 0xFF, 0x57: regs["ffirst"] >> 8,
+                 0x58: regs["faddr"] & 0xFF, 0x59: regs["nface"] & 0xFF,
+                 0x65: tx["taddr"] & 0xFF,
+                 0x66: regs["efirst"] & 0xFF, 0x67: regs["efirst"] >> 8,
+                 0x68: regs["vaddr"] >> 8, 0x69: regs["eaddr"] >> 8,
+                 0x6A: regs["nvert"] >> 8, 0x6B: regs["nedge"] >> 8,
+                 0x6C: regs["faddr"] >> 8, 0x6D: regs["nface"] >> 8,
+                 0x6E: tx["taddr"] >> 8, 0x6F: (AW << 4) | regs["ext"]}
+        return table.get(i, 0xFF)
+
     for op in ops:
         p = op.split()
         if p[0] == "W":
             sel, b = int(p[1]), int(p[2], 16)
             if sel == 0:
-                regs["widx"] = b
+                regs["widx"] = regs["rptr"] = b
                 regs["vbuf"], regs["ebuf"], regs["fbuf"] = [], [], []
                 tx["buf"] = []
                 continue
@@ -360,24 +416,32 @@ def replay(ops, totals):
                     wi = i >> 1
                     if wi < 18:
                         cfg[wi] = word if wi == 12 else signed16(word)
-            elif i == 0x40: regs["vaddr"] = b
-            elif i == 0x41: regs["eaddr"] = b
-            elif i == 0x42: regs["nvert"] = b
-            elif i == 0x43: regs["nedge"] = b
+                    if wi == 20:
+                        regs["rptr"] = 0x30
+            elif i == 0x40: lo8("vaddr", b)
+            elif i == 0x41: lo8("eaddr", b)
+            elif i == 0x42: lo8("nvert", b)
+            elif i == 0x43: lo8("nedge", b)
             elif i == 0x44: regs["color"] = b
             elif i == 0x45: regs["lop"] = b & 0xF
             elif i == 0x46: regs["ypage"] = (regs["ypage"] & 0x700) | b
             elif i == 0x47: regs["ypage"] = (regs["ypage"] & 0xFF) | ((b & 7) << 8)
             elif i == 0x48 and (b & 1):
-                verts = vmem[:regs["nvert"]]
+                # transform phase: NVERT vertices from VFIRST on
+                for k in range(regs["nvert"]):
+                    n = (regs["vfirst"] + k) & 0x3FF
+                    pmem[n] = core_model(cfg, vmem[n])
                 if b & 2:
                     tex = dict(on=bool(b & 4), texx=tx["texx"], texy=tx["texy"],
                                tstride=tx["tstride"], uv=tmem)
-                    cmds, skip, draw, cull = render_faces(cfg, verts, fmem[:regs["nface"]],
-                                                          regs["lop"], regs["ypage"], light, tex)
+                    faces = [((regs["ffirst"] + k) & 0x3FF, fmem[(regs["ffirst"] + k) & 0x3FF])
+                             for k in range(regs["nface"])]
+                    cmds, skip, draw, cull = draw_faces(cfg, Proj(), faces, regs["lop"],
+                                                        regs["ypage"], light, tex)
                 else:
-                    edges = emem[:regs["nedge"]]
-                    cmds, skip, draw, cull = render(cfg, verts, edges, regs["color"], regs["lop"], regs["ypage"])
+                    edges = [emem[(regs["efirst"] + k) & 0x3FF] for k in range(regs["nedge"])]
+                    cmds, skip, draw, cull = draw_edges(cfg, Proj(), edges, regs["color"],
+                                                        regs["lop"], regs["ypage"])
                 pending = cmds
                 last_counts = (skip, draw, cull)
                 totals["draw"] += draw
@@ -388,46 +452,76 @@ def replay(ops, totals):
                 if len(regs["vbuf"]) == 6:
                     vb = regs["vbuf"]
                     vmem[regs["vaddr"]] = tuple(signed16(vb[2 * k] | (vb[2 * k + 1] << 8)) for k in range(3))
-                    regs["vaddr"] = (regs["vaddr"] + 1) & 0xFF
+                    bump(regs, "vaddr")
                     regs["vbuf"] = []
             elif i == 0x52:
+                # v1.0.0: I0 I1 I2 I3, NX NY NZ, BASE (11 bytes). Extended: a
+                # byte with the two high bits of each index follows I3 (12).
                 regs["fbuf"].append(b)
-                if len(regs["fbuf"]) == 11:
+                if len(regs["fbuf"]) == (12 if regs["ext"] else 11):
                     fb = regs["fbuf"]
-                    fmem[regs["faddr"]] = (fb[0], fb[1], fb[2], fb[3],
+                    idx = fb[0:4]
+                    if regs["ext"]:
+                        idx = [idx[k] | (((fb[4] >> (2 * k)) & 3) << 8) for k in range(4)]
+                        fb = fb[0:4] + fb[5:]
+                    fmem[regs["faddr"]] = (idx[0], idx[1], idx[2], idx[3],
                                            signed16(fb[4] | fb[5] << 8), signed16(fb[6] | fb[7] << 8),
                                            signed16(fb[8] | fb[9] << 8), fb[10])
-                    regs["faddr"] = (regs["faddr"] + 1) & 0xFF
+                    bump(regs, "faddr")
                     regs["fbuf"] = []
             elif i == 0x53:
                 tx["buf"].append(b)
                 if len(tx["buf"]) == 8:
                     tmem[tx["taddr"]] = list(tx["buf"])
-                    tx["taddr"] = (tx["taddr"] + 1) & 0xFF
+                    bump(tx, "taddr")
                     tx["buf"] = []
+            elif i == 0x54: lo8("vfirst", b)
+            elif i == 0x55: hi2("vfirst", b)
+            elif i == 0x56: lo8("ffirst", b)
+            elif i == 0x57: hi2("ffirst", b)
             elif i == 0x60: tx["texx"] = (tx["texx"] & 0x100) | b
             elif i == 0x61: tx["texx"] = (tx["texx"] & 0xFF) | ((b & 1) << 8)
             elif i == 0x62: tx["texy"] = (tx["texy"] & 0x1F00) | b
             elif i == 0x63: tx["texy"] = (tx["texy"] & 0xFF) | ((b & 0x1F) << 8)
             elif i == 0x64: tx["tstride"] = b
-            elif i == 0x65: tx["taddr"] = b
-            elif i == 0x58: regs["faddr"] = b
-            elif i == 0x59: regs["nface"] = b
+            elif i == 0x65: tx["taddr"] = (tx["taddr"] & 0x300) | b
+            elif i == 0x66: lo8("efirst", b)
+            elif i == 0x67: hi2("efirst", b)
+            elif i == 0x68: hi2("vaddr", b)
+            elif i == 0x69: hi2("eaddr", b)
+            elif i == 0x6A: hi2("nvert", b)
+            elif i == 0x6B: hi2("nedge", b)
+            elif i == 0x6C: hi2("faddr", b)
+            elif i == 0x6D: hi2("nface", b)
+            elif i == 0x6E: tx["taddr"] = (tx["taddr"] & 0xFF) | ((b & 3) << 8)
+            elif i == 0x6F: regs["ext"] = b & 1
+            elif i == 0x58: lo8("faddr", b)
+            elif i == 0x59: lo8("nface", b)
             elif i in (0x5A, 0x5C, 0x5E): regs["lo"] = b
             elif i in (0x5B, 0x5D, 0x5F): light[(i - 0x5B) // 2] = signed16((b << 8) | regs["lo"])
             elif i == 0x51:
+                # v1.0.0: A, B (2 bytes). Extended: a third byte with the high
+                # bits (A in bits 1-0, B in bits 3-2).
                 regs["ebuf"].append(b)
-                if len(regs["ebuf"]) == 2:
-                    emem[regs["eaddr"]] = tuple(regs["ebuf"])
-                    regs["eaddr"] = (regs["eaddr"] + 1) & 0xFF
+                if len(regs["ebuf"]) == (3 if regs["ext"] else 2):
+                    eb = regs["ebuf"]
+                    if regs["ext"]:
+                        emem[regs["eaddr"]] = (eb[0] | ((eb[2] & 3) << 8), eb[1] | (((eb[2] >> 2) & 3) << 8))
+                    else:
+                        emem[regs["eaddr"]] = (eb[0], eb[1])
+                    bump(regs, "eaddr")
                     regs["ebuf"] = []
             # index advance (same rule as next_idx in RTL)
             if i >> 4 == 4:
                 regs["widx"] = 0x40 | ((i + 1) & 0xF)
+            elif i >> 2 == 0x15:
+                regs["widx"] = 0x54 | ((i + 1) & 0x3)
             elif i >> 3 == 0x0B:
                 regs["widx"] = 0x58 | ((i + 1) & 0x7)
             elif i >> 3 == 0x0C:
                 regs["widx"] = 0x60 | ((i + 1) & 0x7)
+            elif i >> 3 == 0x0D:
+                regs["widx"] = 0x68 | ((i + 1) & 0x7)
             elif i == 0x29:
                 regs["widx"] = 0x24
             elif i < 0x40:
@@ -438,6 +532,20 @@ def replay(ops, totals):
             pending = None
         elif p[0] == "K":
             log.append("K %04x %04x %04x" % last_counts)
+            regs["widx"] = 0x4A             # (the testbench reads 4Ah-4Fh:
+            regs["rptr"] = 0x40             #  the read pointer wraps to 40h)
+            regs["vbuf"], regs["ebuf"], regs["fbuf"], tx["buf"] = [], [], [], []
+        elif p[0] == "G":
+            # read <count> registers from index <idx> (hex), outside a RUN
+            regs["widx"] = regs["rptr"] = int(p[1], 16)
+            regs["vbuf"], regs["ebuf"], regs["fbuf"], tx["buf"] = [], [], [], []
+            got = []
+            for _ in range(int(p[2])):
+                r = regs["rptr"]
+                got.append(rdata(r))
+                if r >> 4 == 4:
+                    regs["rptr"] = 0x40 | ((r + 1) & 0xF)
+            log.append("G %02x %s" % (int(p[1], 16), " ".join("%02x" % x for x in got)))
         elif p[0] == "F":
             log.append(op)
     return log
