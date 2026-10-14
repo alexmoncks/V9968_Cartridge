@@ -104,6 +104,38 @@ module tb_engine;
     end
     always @(posedge clk) if (run_busy) busy_cyc = busy_cyc + 1;
 
+    // +ec=<file>: the producer's clock, for the emulators that model the
+    // engine's time (blueMSX+): the clocks since RUN was written, not
+    // counting those the producer spends stalled on the holding register
+    // (E_BUILD or D_SPAN with a command still held). One line per command
+    // as it enters the holding register ("C <clock>"), one when the
+    // producer reaches R_DRAIN ("E <clock>"), one per F marker ("F <n>").
+    integer fe, pc, ec_on, ec_drained;
+    reg [8*64-1:0] ec_name;
+    wire ec_build = (dut.st == 7'd21);                    // E_BUILD
+    wire ec_span  = (dut.st == 7'd54) && dut.span_ok;     // D_SPAN with a span
+    initial begin
+        fe = 0; pc = 0; ec_on = 0; ec_drained = 0;
+        if ($value$plusargs("ec=%s", ec_name)) fe = $fopen(ec_name, "w");
+    end
+    always @(posedge clk) if (fe != 0) begin
+        if (dut.run_req) begin
+            pc = 0; ec_on = 1; ec_drained = 0;
+        end else if (ec_on) begin
+            if ((ec_build || ec_span) && dut.hold_valid) begin
+                // stalled: the clock does not count
+            end else begin
+                pc = pc + 1;
+                if (ec_build || ec_span) $fwrite(fe, "C %0d\n", pc);
+                if (dut.st == 7'd23 && !ec_drained) begin   // R_DRAIN
+                    $fwrite(fe, "E %0d\n", pc);
+                    ec_drained = 1;
+                end
+            end
+            if (!run_busy && ec_drained) ec_on = 0;
+        end
+    end
+
     initial begin
         violations = 0; ncmd = 0; frames = 0; maxcyc = 0;
         if (!$value$plusargs("stim=%s", stim_name)) stim_name = "scenes_stim.txt";
@@ -147,6 +179,7 @@ module tb_engine;
                     r = $fscanf(fi, "%d", a);
                     $fwrite(fo, "F %0d\n", a);
                     if (ft != 0) $fwrite(ft, "%0d %0d\n", a, busy_cyc);
+                    if (fe != 0) $fwrite(fe, "F %0d\n", a);
                     busy_cyc = 0;
                     frames = frames + 1;
                 end

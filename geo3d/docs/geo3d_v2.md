@@ -3,7 +3,8 @@
 Status: branch `geo3d-v2.0`, started 2026-10-13 from v1.0.0 (tag
 `geo3d-v1.0.0`, the version in HRA!'s official V9968 distribution). Verified
 in simulation and built with Gowin EDA for the Tang Nano 20K; **not run on
-hardware, not proposed to HRA! yet, no emulator implements it yet**. The
+hardware and not proposed to HRA! yet**. The two emulators have local
+branches with it (section 7). The
 official firmware is still v1.0.0.
 
 v2.0 does three things:
@@ -282,8 +283,8 @@ flag bits dropped from the projected-vertex RAM.)
 ## 6. Not done yet
 
 - **Hardware.** Nothing of v2.0 has run on a cartridge.
-- **Emulators.** The openMSX fork and blueMSX+ implement v1.0.0: software
-  for v2.0 cannot be tested in them yet.
+- **Emulators.** Both have a local `geo3d-v2.0` branch with the device's
+  core brought to v2.0 (section 7); no v2.0 program has run in them yet.
 - **Tools.** `tools/glb2g3.py`, G3BASIC and the demo programs still stop at
   255 vertices and faces.
 - **README.md, run_all.sh.** Not changed on this branch (the README still
@@ -295,3 +296,43 @@ flag bits dropped from the projected-vertex RAM.)
   instead.
 - **Release.** By the policy in the README a new geo3d version is proposed
   to HRA!, who decides; v2.0 has not been.
+
+## 7. Emulators
+
+geo3d is emulated by a core with no dependency on its emulator: `Geo3DCore`,
+a port of the reference model, written for the openMSX fork and ported to
+blueMSX+ by Hesoten, who added the engine's time to it. Both have a local
+branch `geo3d-v2.0` with that core brought to v2.0:
+
+| Emulator | Branch, from | What changed |
+|---|---|---|
+| openMSX fork (alexmoncks/openMSX) | `geo3d-v2.0`, from `geo3d` | `src/video/Geo3DCore.*`: the v2.0 registers, streams and RAMs; `tools/geo3d_replay.cc` reads registers too. The geometry takes no emulated time there, so the faster engine changes nothing |
+| blueMSX+ (Hesoten/blueMSX-plus, a local clone) | `geo3d-v2.0`, from `experimental/v9968-geo3d` | `Geo3DCore.*` likewise, and its engine clock recounted for v2.0: the heap of visible faces, the divider, the vertices read back to back. `GEO3D_V2.md` there has the details. Not Hesoten's work and not sent to him |
+
+Checked on the cores alone (`tools/geo3d_replay` of the fork;
+`sim/blue_replay.cc` here for the blueMSX+ one), both built with g++:
+
+- the command logs of the reference model, byte for byte: the six v1.0.0
+  sets (354,131 lines), the v2.0 scenes (77,390 lines, registers read back)
+  and the benchmark's three logs (44,185 lines);
+- for blueMSX+, the engine clock of every command and of every RUN end
+  against the RTL in simulation: `tb_engine.v +ec=<file>` writes the
+  producer's clock (the clocks since RUN it does not spend stalled on the
+  holding register) and `sim/check_ec.py` compares it with the core's. The
+  difference is one constant, -4, on 191,959 commands and 674 RUN ends of
+  v1.0.0's random sets, the v2.0 scenes and the v2.0 benchmarks, and the
+  same -4 for the v1.0.0 core against the v1.0.0 RTL.
+
+That comparison found one difference that v1.0.0's core has too: a RUN in
+face mode with NFACE = 0 ends one engine clock earlier in the RTL (F_START
+goes straight to R_DRAIN). The v2.0 branch of blueMSX+ counts it as the RTL
+does.
+
+openMSX was built from its branch (Linux): in a running `C-BIOS_V9968_JP`
+machine geo3d reads ID 20h and XCTRL A0h, a 10-bit NVERT and VFIRST read
+back, and the fork's smoke test (a v1.0.0 RUN) gives its expected values.
+
+Not done: no v2.0 program has run in either emulator (none exists yet); the
+Windows build of openMSX has not been made from the branch; blueMSX+ needs
+MSVC 2022 to build and has not been built or run with its branch, and its
+`Geo3DDevice.c` (one constant changed) was not compiled.
