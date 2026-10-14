@@ -99,24 +99,27 @@ def build(sc, v2):
     st.view(15, 0, 0)
     nv, nf, nring = len(sc["verts"]), len(sc["faces"]), sc["nring"]
     nvfig = sc["ranges"][1][-1][1]
-    st.reg(0x40, 0)
+    wide = nv > 256 or nf > 256                            # (geo3d v2.0 only)
+    if wide:
+        st.ext(1)
+    st.set10("vaddr", 0)
     st.vertices(sc["verts"])
-    st.reg(0x58, 0)
-    st.faces(sc["faces"], False)
+    st.set10("faddr", 0)
+    st.faces(sc["faces"], wide)
     st.reg(0x43, 0)                                         # no edges
     for ring, recs in sc["frames"]:
         # the ring
         st.light(sc["light_ring"])
         if v2:
             st.first("vfirst", nvfig)
-            st.reg(0x42, nv - nvfig)
+            st.set10("nvert", nv - nvfig)
             st.first("ffirst", 0)
         else:
-            st.reg(0x42, nv)
-        st.reg(0x59, nring)
+            st.set10("nvert", nv)
+        st.set10("nface", nring)
         st.matrix(ring[:9], ring[9:])
         st.run(0x03, mark=False)
-        st.reg(0x59, 0)
+        st.set10("nface", 0)
         if not v2:
             st.reg(0x16, 0x00, 0xF8)                        # TZ = -2048: every vertex hidden
             st.run(0x03, mark=False)
@@ -126,19 +129,19 @@ def build(sc, v2):
                 a, b = sc["ranges"][slot][part]
                 if v2:
                     st.first("vfirst", a)
-                    st.reg(0x42, b - a)
+                    st.set10("nvert", b - a)
                 else:
-                    st.reg(0x42, b)
+                    st.set10("nvert", b)
                 st.matrix(recs[slot][part][:9], recs[slot][part][9:])
                 st.run(0x03, mark=False)
         # sort and paint the figures
         st.light(sc["light"])
-        st.reg(0x42, 0)
+        st.set10("nvert", 0)
         if v2:
             st.first("ffirst", nring)
-            st.reg(0x59, nf - nring)
+            st.set10("nface", nf - nring)
         else:
-            st.reg(0x59, nf)
+            st.set10("nface", nf)
         st.matrix(IDENT, [0, 0, 0])
         st.run(0x03)
     return st
@@ -179,16 +182,19 @@ def write(name, st):
 def gen(path):
     rng = random.Random(99201)
     sc = fighter_scene(path, rng) if path else boxes_scene(rng)
-    l1, t1 = write("bench_res1", build(sc, False))
-    l2, t2 = write("bench_res2", build(sc, True))
     spans = lambda l: [x for x in l if x[0] in "LM"]
-    if spans(l1) != spans(l2):
-        sys.exit("the two resident stimuli do not paint the same picture")
+    l2, t2 = write("bench_res2", build(sc, True))
+    if len(sc["verts"]) <= 255 and len(sc["faces"]) <= 255:
+        l1, t1 = write("bench_res1", build(sc, False))
+        if spans(l1) != spans(l2):
+            sys.exit("the two resident stimuli do not paint the same picture")
+        same = "the v1.0.0 and the v2.0 traffic paint the same picture"
+    else:
+        same = "too large for v1.0.0: no bench_res1"
     lb, tb = write("bench_big", big(rng))
-    print("resident scene (%s): %d vertices, %d faces, %d frames, %d faces painted, %d spans; "
-          "the v1.0.0 and the v2.0 traffic paint the same picture"
+    print("resident scene (%s): %d vertices, %d faces, %d frames, %d faces painted, %d spans; %s"
           % ("GEO FIGHTER" if path else "boxes", len(sc["verts"]), len(sc["faces"]), len(sc["frames"]),
-             t2["draw"], len(spans(l2))))
+             t2["draw"], len(spans(l2)), same))
     print("big scene: %d faces painted in 4 frames, %d spans" % (tb["draw"], len(spans(lb))))
 
 
