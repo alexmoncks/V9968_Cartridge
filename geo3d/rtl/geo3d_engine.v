@@ -210,14 +210,14 @@ module geo3d_engine #(
     end
 
     reg [95:0] fmem [0:(1 << AW) - 1];     // BASE, NZ, NY, NX, I3, I2, I1, I0 (10 bits each)
-    reg [38:0] smem [0:(1 << AW) - 1];     // visible faces, a heap: KEY(18), FACE(10), COLOUR(8), LEVEL(3)
+    reg [30:0] smem [0:(1 << AW) - 1];     // visible faces, a heap: KEY(18), FACE(10), LEVEL(3)
     reg [63:0] tmem [0:(1 << AW) - 1];     // texture coords: V3 U3 V2 U2 V1 U1 V0 U0
     reg        twe;  reg [9:0] twa;  reg [63:0] twd;
     reg [9:0]  tra;  reg [63:0] trd;
     reg        fwe;  reg [9:0] fwa;  reg [95:0] fwd;
     reg [9:0]  fra;  reg [95:0] frd;
-    reg        swe;  reg [9:0] swa;  reg [38:0] swd;
-    reg [9:0]  sra;  reg [38:0] srd;
+    reg        swe;  reg [9:0] swa;  reg [30:0] swd;
+    reg [9:0]  sra;  reg [30:0] srd;
 
     always @(posedge clk) begin
         if (fwe) fmem[fwa[AW-1:0]] <= fwd;
@@ -621,19 +621,19 @@ module geo3d_engine #(
     // root comes out when its turn to be painted comes (D_POP*, H_DN*), so
     // the order is the one v1.0.0 found by scanning the whole list for every
     // face, in about log2(n) steps instead of n.
-    reg [38:0] hent;                          // the entry looking for its place
-    reg [38:0] hch;                           // the first child read
+    reg [30:0] hent;                          // the entry looking for its place
+    reg [30:0] hch;                           // the first child read
     reg [9:0]  hole;                          // where the place is being looked for
     reg [9:0]  hn;                            // entries in the heap
     reg [7:0]  dcol;
 
     // 1 when entry a is painted before entry b
     function hbefore;
-        input [38:0] a;
-        input [38:0] b;
+        input [30:0] a;
+        input [30:0] b;
         begin
-            hbefore = ($signed(a[38:21]) > $signed(b[38:21])) ||
-                      (a[38:21] == b[38:21] && a[20:11] < b[20:11]);
+            hbefore = ($signed(a[30:13]) > $signed(b[30:13])) ||
+                      (a[30:13] == b[30:13] && a[12:3] < b[12:3]);
         end
     endfunction
 
@@ -641,7 +641,7 @@ module geo3d_engine #(
     wire [10:0] hc1     = {hole, 1'b1};                   // 2 * hole + 1
     wire [10:0] hc2     = {hole, 1'b1} + 11'd1;           // 2 * hole + 2
     wire        hsecond = (hc2 < {1'b0, hn}) && hbefore(srd, hch);
-    wire [38:0] hbest   = hsecond ? srd : hch;            // the child painted first
+    wire [30:0] hbest   = hsecond ? srd : hch;            // the child painted first
 
     reg [10:0] yrow, ymax;
     reg [1:0]  ek;
@@ -1078,7 +1078,7 @@ module geo3d_engine #(
                 // the visible face goes into the heap: from the first free
                 // place up, for as long as it is painted before its parent
                 F_S4: begin
-                    hent <= {zkey, fi, fcur[95:88] + {5'd0, slevel}, slevel};
+                    hent <= {zkey, fi, slevel};
                     hole <= nvis;
                     nvis <= nvis + 10'd1;
                     st   <= H_UP;
@@ -1125,8 +1125,8 @@ module geo3d_engine #(
                     st  <= D_POP2;
                 end
                 D_POP2: begin                       // srd: the root
-                    dcol <= srd[10:3]; dlev <= srd[2:0];
-                    fra  <= srd[20:11]; tra <= srd[20:11];
+                    dlev <= srd[2:0];
+                    fra  <= srd[12:3]; tra <= srd[12:3];
                     hn   <= hn - 10'd1;
                     hole <= 10'd0;
                     st   <= D_POP3;
@@ -1168,6 +1168,7 @@ module geo3d_engine #(
                 D_FW2: begin
                     fcur <= frd; tcur <= trd; vret <= 1'b1;
                     dtex <= ftex & frd[95];
+                    dcol <= frd[95:88] + {5'd0, dlev};   // BASE + level (v2.0: not kept in the heap)
                     pra  <= frd[9:0];
                     st   <= V_A1;
                 end

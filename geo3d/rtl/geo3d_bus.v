@@ -95,8 +95,15 @@ module geo3d_bus #(
     reg  [5:0] cmd_num_e;
     reg  [7:0] cmd_data_e;
 
+    // v2.0: the engine side resets from its own flop. The slot's reset_n then
+    // reaches one clk_eng register instead of every register of the engine
+    // (a clk -> clk_eng path with a fanout of hundreds, which took routing
+    // from the VDP). The engine leaves reset one engine clock later.
+    reg        rst_e;
+    always @(posedge clk_eng) rst_e <= ~reset_n;
+
     always @(posedge clk_eng) begin
-        if (!reset_n) begin
+        if (rst_e) begin
             req_seen <= 1'b0; ack_r <= 1'b0; e_wr <= 1'b0; e_rd <= 1'b0;
             cmd_t <= 1'b0; ce_s <= 1'b0;
         end else begin
@@ -119,7 +126,7 @@ module geo3d_bus #(
     assign ack_t = ack_r;
 
     geo3d_engine u_engine (
-        .clk(clk_eng), .rst(~reset_n),
+        .clk(clk_eng), .rst(rst_e),
         .sel(a_sel), .wr_stb(e_wr), .rd_stb(e_rd), .din(a_data), .dout(eng_dout),
         .cmd_wr(e_cmd_wr), .cmd_num(e_cmd_num), .cmd_data(e_cmd_data), .cmd_ce(ce_s),
         .run_busy(run_busy)
