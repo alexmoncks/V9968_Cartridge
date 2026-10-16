@@ -174,74 +174,89 @@ What was left out on purpose:
 
 ## 4. FPGA (Tang Nano 20K, GW2AR-18)
 
-| | Official (geo3d v1.0.0) | v2.0, 1024 entries | v2.0 with `AW = 9`, 512 entries |
+| | Official (geo3d v1.0.0) | v2.0, 1024 entries | v2.0, same, Route Option 2 |
 |---|---|---|---|
-| Logic (LUT + ALU) | 13,130 (64%) | 13,867 (67%) | 13,779 (67%) |
-| Registers | 7,863 (50%) | 8,004 (51%) | 7,980 (51%) |
-| CLS | 9,137 (89%) | 9,282 (90%) | 9,259 (90%) |
-| BSRAM | 22 of 46 | 31 of 46 | 22 of 46 |
+| Logic (LUT + ALU) | 13,130 (64%) | 13,714 (67%) | 13,714 (67%) |
+| Registers | 7,863 (50%) | 7,976 (51%) | 7,976 (51%) |
+| CLS | 9,137 (89%) | 9,267 (90%) | 9,267 (90%) |
+| BSRAM | 22 of 46 | 30 of 46 | 30 of 46 |
 | DSP | 9 of 24 | 9 of 24 | 9 of 24 |
-| geo3d engine alone: registers / ALU / LUT / BSRAM | 2,698 / 1,097 / 3,443 / 12 | 2,839 / 1,165 / 4,081 / 21 | |
-| Engine clock (42.955 MHz needed) | 52.2 MHz | 54.4 MHz | 56.0 MHz |
-| Worst setup slack inside geo3d | +4.11 ns | +4.88 ns | +5.41 ns |
-| Worst setup slack on clk85m (the V9968) | +0.071 ns | **+0.382 ns** | +0.005 ns |
+| Engine clock (42.955 MHz needed) | 52.2 MHz | 44.3 MHz | 44.1 MHz |
+| Worst setup slack inside geo3d | +4.11 ns | +0.73 ns | +0.62 ns |
+| Worst setup slack on clk85m (the V9968) | +0.071 ns | **+0.031 ns** | **+0.328 ns** |
 | Negative-slack paths, every clock pair, setup / hold / recovery / removal | 0 | 0 | 0 |
-| Place and route | HRA!'s settings | Route Option 2, geo3d's RAMs placed | HRA!'s settings |
+| Place and route | HRA!'s settings | **HRA!'s settings**, geo3d's RAMs placed | Route Option 2, geo3d's RAMs placed |
 
-Built with `syn/gowin/build_v2.sh`: HRA!'s official project
-(`fpga/V9968_Cartridge_TangNano20K`, his sources, his constraints) on a
-copy outside the repository, with `src/geo3d/` replaced by `geo3d/rtl`. His
-folder is not touched. "Official" is the same flow on his files as they
-are: it gives his own figures.
+All on HRA!'s main at 122cdd1, built with `syn/gowin/build_v2.sh`: his
+official project (`fpga/V9968_Cartridge_TangNano20K`, his sources, his
+constraints) on a copy outside the repository, with `src/geo3d/` replaced
+by `geo3d/rtl`. His folder is not touched. "Official" is the same flow on
+his files as they are: it gives his own figures. His settings are Place
+Option 0 and Route Option 0.
 
-The six model RAMs go from 256 to 1024 entries, 79 kbit to 331 kbit, and
-from 12 block RAMs to 21. **Those 9 blocks, not the logic, are what the
-V9968 feels.** With HRA!'s settings and nothing else, the placer spreads
-geo3d's RAMs over the three BSRAM rows of the chip, his sprite divide table
-moves from `BSRAM_R46[9]` to the far end of row R28, the sprite logic
-follows it away from the screen position counter it reads, and his worst
-path fails:
+The six model RAMs go from 256 to 1024 entries. **Their block RAMs, not the
+logic, are what the V9968 feels.** With HRA!'s settings and nothing else,
+the placer spreads geo3d's RAMs over the three BSRAM rows of the chip, his
+sprite logic moves away from the screen position counter it reads, and his
+worst path (`ff_screen_pos_x_clone` -> `ff_sprite_overmap_id`, the one with
++0.001 ns in the first v1.0.0 build) fails.
 
-| v2.0, 1024 entries | Worst setup slack on clk85m | Negative paths |
-|---|---|---|
-| HRA!'s settings, nothing else | -1.288 ns | 12 |
-| Route Option 1 | -0.790 ns | 8 |
-| Route Option 2 | -0.779 ns | 14 |
-| Place Option 1, Route Option 2 | -0.972 ns | 29 |
-| geo3d's RAMs placed: row R10 and the left of R28; HRA!'s settings | -0.570 ns | 20 |
-| ... the same, Route Option 2 | -0.035 ns | 2 |
-| geo3d's RAMs placed: row R10, the left of R28 and of R46; Route Option 2 | +0.061 ns | 0 |
-| geo3d's RAMs placed: row R10 and the left of R46; Route Option 2 | **+0.382 ns** | 0 |
+Two changes of the RTL came from HRA!'s report of that failure (2026-10-16):
 
-(The first four lines are from the RTL before its last change, the read
-value of XCTRL bits 7-4; the other four from the final RTL. Place Option 3
-and 4 give the result of Place Option 0: this Gowin version does not seem
-to have them.) The last line is the build of the
-table above: `syn/gowin/geo3d_v2_bsram.cst` gives each of geo3d's 21 RAMs
-its place, 15 in row R10 and 6 at the left end of row R46, so that row R28
-and the rest of R46 stay with the V9968 as in HRA!'s own build. The file
-names geo3d's instances only and is added to the copy's constraints:
+- **The engine resets from its own flop** (`rst_e` in `geo3d_bus.v`, a
+  clk_eng register of the slot's reset). Before, the slot's reset reached
+  every register of the engine: a clk85m -> clk42g path with a fanout of
+  hundreds, -1.287 ns with the RAMs placed and Route Option 0, and routing
+  taken from the V9968. The engine leaves reset one engine clock later.
+- **The heap keeps KEY, FACE and LEVEL** (31 bits, 2 block RAMs instead of
+  3): COLOUR = BASE + level is computed when the face comes out of the
+  heap, from the face read back. The Z80 does not write model RAM while
+  RUN busy, so it is the BASE the entry was made with. 21 blocks become 20;
+  the theoretical floor for 1024 entries of what the engine keeps (310 bits
+  an entry) is 18.
+
+Neither changes a command or an engine clock (section 5).
+
+| v2.0 on HRA!'s 122cdd1 | clk85m | geo3d | Negative paths |
+|---|---|---|---|
+| RTL before those changes (21 blocks), his settings | -0.524 ns | | 14 |
+| ... RAMs placed (the earlier 21-block file) | -0.077 ns | | 20 (14 of them the reset) |
+| ... RAMs placed, Route Option 2 | +0.382 ns | +4.88 ns | 0 |
+| Final RTL (20 blocks), his settings, nothing else | -0.141 ns | +3.65 ns | 3 |
+| RAMs placed: R10 and the left of R46 (A), his settings | **+0.031 ns** | +0.73 ns | **0** |
+| A, Route Option 2 | +0.328 ns | +0.62 ns | 0 |
+| RAMs placed: R10 and the left of R28 (B), his settings | -0.697 ns | +3.28 ns | 10 |
+| RAMs placed: R10 and the right end of R46 (C), his settings | -0.899 ns | -0.90 ns | 61 |
+| RAMs placed where v1.0.0's are in his build (D), his settings | -0.387 ns | +1.94 ns | 21 |
+
+Arrangement A is `syn/gowin/geo3d_v2_bsram.cst`: each of geo3d's 20 RAMs
+gets its place, 15 in row R10 and 5 at the left end of row R46, so that
+row R28 and R46[7..10] stay with the V9968 as in HRA!'s own build. The file
+names geo3d's instances only. In HRA!'s project it goes at the end of his
+`.cst`; in a copy, build_v2.sh adds it:
 
 ```
 WORK=<a folder outside the repository> CST=geo3d/syn/gowin/geo3d_v2_bsram.cst \
-  OPTIONS="Route_Option=2" sh geo3d/syn/gowin/build_v2.sh v2
+  sh geo3d/syn/gowin/build_v2.sh v2
 ```
 
-Two things were stopped before they finished (the machine ran out of
-memory with several builds at once) and are still to be run: the adopted
-placement with HRA!'s own Route Option 0, and with Route Option 1.
+(`OPTIONS="Route_Option=2"` for the last column of the first table.)
 
-With `AW = 9` nothing of this is needed: the 512-entry RAMs take the same 12
-blocks as v1.0.0 and the build closes with HRA!'s settings as they are
-(+0.005 ns, and +0.140 ns with Route Option 2). Those two builds were made
-before the last change to the RTL (the read value of XCTRL bits 7-4) and a
-512-entry engine has only been built, not simulated: the model and the
-v2.0 scenes are for 1024 entries.
+With HRA!'s settings, A leaves his worst path at +0.031 ns against +0.071
+in his own v1.0.0 build; the worst clk85m path is then in the command
+engine (`ff_command` -> `ff_source`), not the sprite logic. With Route
+Option 2 it has +0.328 ns. The engine clock is the tightest margin of A
+(+0.73 ns, the heap's `hole` from the heap RAM): it was +3.65 ns without
+placement, so the placement, not the logic, takes it.
+
+With `AW = 9` (512 entries) the RAMs take the same 12 blocks as v1.0.0 and
+the build closed with HRA!'s settings as they were (+0.005 ns on his
+earlier main; a 512-entry engine has only been built, not simulated).
 
 The margins on clk85m belong to HRA!'s paths and move with every change to
-the netlist: the same placement gave +0.029 ns before that last change of
-four read bits, and -0.035 ns after it. A release has to be built and
-checked again, whatever it contains.
+the netlist, his or geo3d's: on his earlier main the 21-block placement
+gave +0.029 ns, then -0.035 ns after a change of four read bits. A release
+has to be built and checked again on the main it goes into.
 
 ## 5. Verification
 
@@ -321,7 +336,11 @@ Checked on the cores alone (`tools/geo3d_replay` of the fork;
   holding register) and `sim/check_ec.py` compares it with the core's. The
   difference is one constant, -4, on 191,959 commands and 674 RUN ends of
   v1.0.0's random sets, the v2.0 scenes and the v2.0 benchmarks, and the
-  same -4 for the v1.0.0 core against the v1.0.0 RTL.
+  same -4 for the v1.0.0 core against the v1.0.0 RTL. After the engine's
+  own reset and the heap without COLOUR (section 4), the same core against
+  the new RTL: -4 on every line of 202,271 commands and 874 RUN ends (the
+  three random sets, the v2.0 scenes, the three benchmarks), so neither
+  change needs anything in the emulators.
 
 That comparison found one difference that v1.0.0's core has too: a RUN in
 face mode with NFACE = 0 ends one engine clock earlier in the RTL (F_START

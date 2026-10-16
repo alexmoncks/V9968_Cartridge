@@ -1,20 +1,19 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Alex Moncks
 // geo3d v2.0 with 1024-entry RAMs (AW = 10) on the Tang Nano 20K: where its
-// 21 block RAMs go. Appended to the copy's constraints by build_v2.sh
-// (CST=...); HRA!'s file is not changed and none of his instances is named.
+// 20 block RAMs go. Appended to the copy's constraints by build_v2.sh
+// (CST=...), or to the end of HRA!'s .cst in his project; none of his
+// instances is named here.
 //
 // Left to itself, the placer spreads geo3d's RAMs over the three BSRAM rows
-// and HRA!'s sprite divide table moves from BSRAM_R46[9] (where his own
-// build has it) to the far end of row R28: the sprite logic follows it, away
-// from the screen position counter it reads, and his worst clk85m path
-// fails by 0.8 to 1.3 ns. With geo3d's RAMs kept in row R10 and at the left
-// end of row R46, the whole of row R28 (his line buffers and palette, with
-// the sprite logic around them) and the rest of R46 stay his, as in his
-// build. Two other arrangements were tried (the six RAMs of the last lines
-// at the left end of R28, or split between R28 and R46): they leave his
-// worst path with -0.04 and +0.06 ns; this one, with +0.38 ns (Route Option
-// 2; docs/geo3d_v2.md has the table).
+// and HRA!'s sprite logic moves away from the screen position counter it
+// reads: his worst clk85m path fails (-0.141 ns with his settings on his
+// 122cdd1). His own build keeps his RAMs in row R28 (line buffers, palette)
+// and at R46[7..10] (the sprite divide table at R46[9], the double buffer).
+// Here geo3d takes row R10 (15 RAMs) and the left end of R46 (5). On his
+// 122cdd1 with his own settings (Place and Route Option 0) this closes
+// every table: clk85m +0.031 ns (his v1.0.0 build: +0.071), +0.328 ns with
+// Route Option 2. Three other arrangements fail (docs/geo3d_v2.md, section 4).
 INS_LOC "u_geo3d/u_engine/vmem_vmem_0_0_s" BSRAM_R10[0];
 INS_LOC "u_geo3d/u_engine/vmem_vmem_0_1_s" BSRAM_R10[1];
 INS_LOC "u_geo3d/u_engine/vmem_vmem_0_2_s" BSRAM_R10[2];
@@ -29,10 +28,9 @@ INS_LOC "u_geo3d/u_engine/fmem_fmem_0_4_s" BSRAM_R10[10];
 INS_LOC "u_geo3d/u_engine/fmem_fmem_0_5_s" BSRAM_R10[11];
 INS_LOC "u_geo3d/u_engine/smem_smem_0_0_s" BSRAM_R10[12];
 INS_LOC "u_geo3d/u_engine/smem_smem_0_1_s" BSRAM_R10[13];
-INS_LOC "u_geo3d/u_engine/smem_smem_0_2_s" BSRAM_R10[14];
 INS_LOC "u_geo3d/u_engine/tmem_tmem_0_0_s" BSRAM_R46[0];
 INS_LOC "u_geo3d/u_engine/tmem_tmem_0_1_s" BSRAM_R46[1];
 INS_LOC "u_geo3d/u_engine/tmem_tmem_0_2_s" BSRAM_R46[2];
 INS_LOC "u_geo3d/u_engine/tmem_tmem_0_3_s" BSRAM_R46[3];
-INS_LOC "u_geo3d/u_engine/emem_emem_0_0_s" BSRAM_R46[4];
-INS_LOC "u_geo3d/u_engine/emem_emem_0_1_s" BSRAM_R46[5];
+INS_LOC "u_geo3d/u_engine/emem_emem_0_0_s" BSRAM_R10[14];
+INS_LOC "u_geo3d/u_engine/emem_emem_0_1_s" BSRAM_R46[4];
