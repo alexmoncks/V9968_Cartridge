@@ -1,0 +1,65 @@
+{
+  "meta": {
+    "filename": "geo3d_logic.kicad_pro",
+    "version": 3
+  },
+  "schematic": {
+    "drawing": {
+      "default_text_size": 50.0
+    }
+  },
+  "sheets": [
+    [
+      "931a9fcf-f22f-4910-8581-ab00d7fc3bb7",
+      "Root"
+    ],
+    [
+      "470c911f-a0ed-4192-ac88-a15d885f670e",
+      "clock_reset"
+    ],
+    [
+      "c9d1c6e3-2e4c-4ec6-a56f-fa828d851471",
+      "msx_slot"
+    ],
+    [
+      "a69c2d62-08d7-43e8-b5dc-edbc51f1eec9",
+      "geo3d_bus"
+    ],
+    [
+      "614c738a-966e-44e7-8144-0a1b06c1266e",
+      "geo3d_engine"
+    ],
+    [
+      "57072d08-f751-46fd-bbc6-a07a566149ab",
+      "geo3d_core"
+    ],
+    [
+      "9a8e5424-d449-4116-8381-ff9094d0a8e7",
+      "vdp"
+    ],
+    [
+      "022e880b-3fe0-4c22-bf65-7e80ac788913",
+      "vdp_timing_control"
+    ],
+    [
+      "35a73037-b991-4920-ae74-b78195c44c43",
+      "vdp_timing_control_sprite"
+    ],
+    [
+      "e1f0b6e7-f61f-477d-9525-9192ab472668",
+      "vdp_color_palette"
+    ],
+    [
+      "60190c33-53cc-40f1-a50d-3a7742e29dce",
+      "vdp_upscan"
+    ],
+    [
+      "ba76b919-a7f3-4817-ac38-ac398b8e6f9e",
+      "vdp_video_out"
+    ],
+    [
+      "f182e004-da58-4c71-9d36-7ecefaa1be29",
+      "vdp_video_double_buffer"
+    ]
+  ]
+}
